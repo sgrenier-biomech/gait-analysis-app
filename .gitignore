@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.c3d
+*.mp4
+kinetics.venv/
+.venv/
+app.py
+app2.py
+*.py
+!streamlit_app.py
+!inverse_dynamics_final2.py
+!COP_final2.py
