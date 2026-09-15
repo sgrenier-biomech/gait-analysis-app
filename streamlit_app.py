@@ -50,7 +50,7 @@ def process_cop(c3d_file_path: str):
     markers = c3d_data["Points"]
     force = c3d_data["Analogs"]
 
-    force.data #you can list it here and see what exactly is in the variable for plotting or other manipulation
+   #force.data #you can list it here and see what exactly is in the variable for plotting or other manipulation
    #X = MedioLateral direction, Right +ve
    #Y = Antero-posterior, Forward +ve
    #Z = Up-Down, Up +ve
