@@ -132,7 +132,7 @@ def process_cop(c3d_file_path: str):
     FP1_filtered = ktk.filters.butter(FP1, fc=20)
     FP2_filtered = ktk.filters.butter(FP2, fc=20)
 
-    return FP1_filtered, FP2_filtered
+    return FP1, FP2, FP1_filtered, FP2_filtered
 
 
 def transform_to_omega(angles_ts, omega_raw_ts, sequence="XYZ"):
@@ -502,7 +502,7 @@ def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: 
     omega_filt = ktk.filters.butter(omega, fc=5)
     alpha = ktk.filters.deriv(omega_filt)
 
-    FP1_filtered, FP2_filtered = process_cop(c3d_file_path)
+    FP1,FP2, FP1_filtered, FP2_filtered = process_cop(c3d_file_path)
     fp1 = FP1_filtered.copy()
     fp2 = FP2_filtered.copy()
     fp1.resample(120, kind="linear", in_place=True)
@@ -512,7 +512,7 @@ def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: 
         omega, alpha, com_accelerations, joint_positions, com_positions, fplate,
         mass_total, height_total, FP1_filtered=fp1, FP2_filtered=fp2
     )
-    return markers, angles, results
+    return markers, angles, results, FP1, FP2
 
 
 # =======================================================
@@ -541,17 +541,19 @@ if st.button("Run Kinematics Analysis", type="primary"):
     else:
         with st.spinner("Processing file..."):
             try:
-                markers, angles, results = run_segment_kinematics(selected_file_path, mass, height)
+                markers, angles, results, FP1, FP2 = run_segment_kinematics(selected_file_path, mass, height)
                 st.session_state["markers"] = markers
                 st.session_state["angles"] = angles
                 st.session_state["results"] = results
+                st.session_state["FP1_debiased"] = FP1
+                st.session_state["FP2_debiased"] = FP2
                 st.success("Analysis completed!")
             except Exception as e:
                 st.error(f"Error: {e}")
 
 if "angles" in st.session_state and "results" in st.session_state and "markers" in st.session_state:
     st.markdown("---")
-    tab1, tab2, tab3 = st.tabs(["Joint Angles", "Forces & Moments", "3D Interactive Animation"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Joint Angles", "Forces & Moments", "3D Interactive Animation", "GRF"])
 
     with tab1:
         joint_choice = st.selectbox("Select Joint:", ["HipL", "HipR", "KneeL", "KneeR", "AnkleL", "AnkleR"])
@@ -601,6 +603,64 @@ if "angles" in st.session_state and "results" in st.session_state and "markers" 
             st.plotly_chart(fig, use_container_width=True)
 
     with tab3:
+        st.markdown("### Ground Reaction Force (GRF) Filter Explorer")
+        st.caption("Compare baseline-corrected force signals against custom filter cutoffs in real time.")
+
+        col_ctrl1, col_ctrl2, col_ctrl3 = st.columns(3)
+        with col_ctrl1:
+            plate_choice = st.radio("Force Plate:", ["FP1", "FP2"], horizontal=True)
+        with col_ctrl2:
+            filter_type = st.selectbox("Filter:", ["Butterworth Low-pass", "Moving Median"])
+        with col_ctrl3:
+            if filter_type == "Butterworth Low-pass":
+                cutoff_fc = st.slider("Cutoff Frequency (Hz):", min_value=2, max_value=100, value=20, step=1)
+            else:
+                window_len = st.slider("Window Length (Samples):", min_value=3, max_value=51, value=11, step=2)
+
+        # Select the chosen plate's debiased TimeSeries
+        raw_fp = st.session_state["FP1_debiased"] if plate_choice == "FP1" else st.session_state["FP2_debiased"]
+
+        # Apply interactive filter
+        if filter_type == "Butterworth Low-pass":
+            filt_fp = ktk.filters.butter(raw_fp, fc=cutoff_fc)
+        else:
+            filt_fp = ktk.filters.median(raw_fp, window_length=window_len)
+
+        import plotly.graph_objects as go
+        prefix = "F1" if plate_choice == "FP1" else "F2"
+        axes = [("X (Medio-Lateral)", f"{prefix}X", "#ef4444"),
+                ("Y (Antero-Posterior)", f"{prefix}Y", "#22c55e"),
+                ("Z (Vertical)", f"{prefix}Z", "#3b82f6")]
+
+        fig = go.Figure()
+        for label, key, color in axes:
+            # Unfiltered / Debiased trace (dashed)
+            fig.add_trace(go.Scatter(
+                x=raw_fp.time, y=raw_fp.data[key],
+                mode='lines',
+                line=dict(color=color, dash='dot', width=1),
+                opacity=0.4,
+                name=f"{label} Debiased"
+            ))
+            # Dynamically filtered trace (solid)
+            fig.add_trace(go.Scatter(
+                x=filt_fp.time, y=filt_fp.data[key],
+                mode='lines',
+                line=dict(color=color, width=2),
+                name=f"{label} Filtered"
+            ))
+
+        fig.update_layout(
+            title=f"{plate_choice} Force Traces ({filter_type})",
+            xaxis_title="Time (s)",
+            yaxis_title="Force (N)",
+            hovermode="x unified",
+            template="plotly_dark",
+            margin=dict(l=20, r=20, t=40, b=20)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+    with tab4:
         st.markdown("### Client-Side 3D Animation Engine")
         st.caption("Free mouse orbit and zoom. Quick anatomical preset buttons at the top-left.")
 
