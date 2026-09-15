@@ -553,7 +553,7 @@ if st.button("Run Kinematics Analysis", type="primary"):
 
 if "angles" in st.session_state and "results" in st.session_state and "markers" in st.session_state:
     st.markdown("---")
-    tab1, tab2, tab3, tab4 = st.tabs(["Joint Angles", "Forces & Moments", "3D Interactive Animation", "GRF"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Joint Angles", "Forces & Moments", "GRF", "3D Interactive Animation"])
 
     with tab1:
         joint_choice = st.selectbox("Select Joint:", ["HipL", "HipR", "KneeL", "KneeR", "AnkleL", "AnkleR"])
