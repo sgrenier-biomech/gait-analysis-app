@@ -610,45 +610,64 @@ if "angles" in st.session_state and "results" in st.session_state and "markers" 
         with col_ctrl1:
             plate_choice = st.radio("Force Plate:", ["FP1", "FP2"], horizontal=True)
         with col_ctrl2:
-            filter_type = st.selectbox("Filter:", ["Butterworth Low-pass", "Moving Median"])
+            # "None (Raw Unfiltered)" is index=0, making it the initial display
+            filter_type = st.selectbox(
+                "Filter:", 
+                ["None (Raw Unfiltered)", "Butterworth Low-pass", "Moving Median"],
+                index=0
+            )
         with col_ctrl3:
             if filter_type == "Butterworth Low-pass":
                 cutoff_fc = st.slider("Cutoff Frequency (Hz):", min_value=2, max_value=100, value=20, step=1)
-            else:
+            elif filter_type == "Moving Median":
                 window_len = st.slider("Window Length (Samples):", min_value=3, max_value=51, value=11, step=2)
+            else:
+                st.caption("Displaying baseline-corrected raw signals.")
 
         # Select the chosen plate's debiased TimeSeries
         raw_fp = st.session_state["FP1_debiased"] if plate_choice == "FP1" else st.session_state["FP2_debiased"]
 
-        # Apply interactive filter
+        # Apply filtering only if chosen
+        filt_fp = None
         if filter_type == "Butterworth Low-pass":
             filt_fp = ktk.filters.butter(raw_fp, fc=cutoff_fc)
-        else:
+        elif filter_type == "Moving Median":
             filt_fp = ktk.filters.median(raw_fp, window_length=window_len)
 
         import plotly.graph_objects as go
         prefix = "F1" if plate_choice == "FP1" else "F2"
-        axes = [("X (Medio-Lateral)", f"{prefix}X", "#ef4444"),
-                ("Y (Antero-Posterior)", f"{prefix}Y", "#22c55e"),
-                ("Z (Vertical)", f"{prefix}Z", "#3b82f6")]
+        axes = [
+            ("X (Medio-Lateral)", f"{prefix}X", "#ef4444"),
+            ("Y (Antero-Posterior)", f"{prefix}Y", "#22c55e"),
+            ("Z (Vertical)", f"{prefix}Z", "#3b82f6")
+        ]
 
         fig = go.Figure()
+
         for label, key, color in axes:
-            # Unfiltered / Debiased trace (dashed)
-            fig.add_trace(go.Scatter(
-                x=raw_fp.time, y=raw_fp.data[key],
-                mode='lines',
-                line=dict(color=color, dash='dot', width=1),
-                opacity=0.4,
-                name=f"{label} Debiased"
-            ))
-            # Dynamically filtered trace (solid)
-            fig.add_trace(go.Scatter(
-                x=filt_fp.time, y=filt_fp.data[key],
-                mode='lines',
-                line=dict(color=color, width=2),
-                name=f"{label} Filtered"
-            ))
+            if filt_fp is None:
+                # Default: Show clean, solid raw signals
+                fig.add_trace(go.Scatter(
+                    x=raw_fp.time, y=raw_fp.data[key],
+                    mode='lines',
+                    line=dict(color=color, width=2),
+                    name=f"{label} (Raw)"
+                ))
+            else:
+                # Comparison mode: Faded dashed raw vs. solid filtered
+                fig.add_trace(go.Scatter(
+                    x=raw_fp.time, y=raw_fp.data[key],
+                    mode='lines',
+                    line=dict(color=color, dash='dot', width=1),
+                    opacity=0.4,
+                    name=f"{label} Raw"
+                ))
+                fig.add_trace(go.Scatter(
+                    x=filt_fp.time, y=filt_fp.data[key],
+                    mode='lines',
+                    line=dict(color=color, width=2),
+                    name=f"{label} Filtered"
+                ))
 
         fig.update_layout(
             title=f"{plate_choice} Force Traces ({filter_type})",
