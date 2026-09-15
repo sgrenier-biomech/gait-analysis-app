@@ -535,7 +535,7 @@ if uploaded_file is not None:
        tmp.write(uploaded_file.read())
        selected_file_path = tmp.name
 
-if st.button("Run Kinematics Analysis", type="primary"):
+if st.button("Run Analysis", type="primary"):
     if not selected_file_path:
         st.error("Select or upload a .c3d file first.")
     else:
@@ -620,7 +620,7 @@ if "angles" in st.session_state and "results" in st.session_state and "markers" 
             if filter_type == "Butterworth Low-pass":
                 cutoff_fc = st.slider("Cutoff Frequency (Hz):", min_value=2, max_value=100, value=90, step=1)
             elif filter_type == "Moving Median":
-                window_len = st.slider("Window Length (Samples):", min_value=3, max_value=51, value=49, step=2)
+                window_len = st.slider("Window Length (Samples):", min_value=3, max_value=51, value=45, step=2)
             else:
                 st.caption("Displaying baseline-corrected raw signals.")
 
