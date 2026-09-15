@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
 
 from inverse_dynamics_final2 import compute_inverse_dynamics
-from COP_final2 import FP1_filtered, FP2_filtered
+#from COP_final2 import FP1_filtered, FP2_filtered
 
 
 INTERCONNECTIONS = {
@@ -42,6 +42,97 @@ INTERCONNECTIONS = {
         ],
     },
 }
+
+def process_cop(c3d_file_path: str):
+    """Processes COP and force plate data dynamically from the uploaded C3D file."""
+    # Reads the exact temporary file created by the uploader
+    c3d_data = ktk.read_c3d(str(c3d_file_path))
+    markers = c3d_data["Points"]
+    force = c3d_data["Analogs"]
+
+    force.data #you can list it here and see what exactly is in the variable for plotting or other manipulation
+   #X = MedioLateral direction, Right +ve
+   #Y = Antero-posterior, Forward +ve
+   #Z = Up-Down, Up +ve
+   #right Hand System
+
+   # Sampling frequency
+    ForceSF = 1200  # Hz
+   # Number of samples (assumed from force data)
+    num_samples = len(force.data["F1X"])  # Assuming all channels have the same length
+   # Generate time array
+    time = np.arange(0, num_samples / ForceSF, 1 / ForceSF)  # Creates time values at 1200Hz
+    force.data["Time"] = time
+
+
+   # Scale all numerical data in the TimeSeries by 1000
+   # Define the keys that need to be scaled
+    force_to_scale = ["F1X", "F1Y", "F1Z", "F2X", "F2Y", "F2Z"]
+   # Apply scaling only to the specified keys
+    force.data = {key: (value * -1000 if key in force_to_scale else value) for key, value in force.data.items()}
+
+   # Moments_to_scale = ["M1X", "M1Y", "M1Z", "M2X", "M2Y", "M2Z"]
+   # # Apply scaling only to the specified keys
+   # force.data = {key: (value * 0.0001 if key in Moments_to_scale else value) for key, value in force.data.items()}
+
+   # #reshape the force for proper calibration
+   # # Extract force & moment components for each force plate
+   # F1 = np.vstack([
+   #     force.data["F1X"], force.data["F1Y"], force.data["F1Z"], 
+   #     force.data["M1X"], force.data["M1Y"], force.data["M1Z"]
+   # ]).T  # Shape: (72000, 6)
+
+   # F2 = np.vstack([
+   #     force.data["F2X"], force.data["F2Y"], force.data["F2Z"], 
+   #     force.data["M2X"], force.data["M2Y"], force.data["M2Z"]
+   # ]).T  # Shape: (72000, 6)
+
+   # # Stack both force plates into a single array
+   # raw_forces = np.stack([F1, F2], axis=-1)  # Shape: (72000, 6, 2)
+
+   # print("Reconstructed force data shape:", raw_forces.shape)
+
+   # # Add the directory where readMATfiles.py is located
+   # sys.path.append(os.path.abspath("/home/sgrenier/.config/spyder-py3/"))  # Update this path
+   # from readMATfiles import ForcePlatformCalibration  # Adjust the filename to match your Python module
+   # print("Calibration matrix loaded from external file:", ForcePlatformCalibration.shape)
+
+   # # Create an empty array for calibrated forces
+   # calibrated_forces = np.zeros_like(raw_forces)  # Same shape: (72000, 6, 2)
+
+   # # Apply calibration separately for each force plate
+   # for plate_idx in range(2):  # Iterate over two force plates
+   #     calibrated_forces[:, :, plate_idx] = np.matmul(
+   #         raw_forces[:, :, plate_idx],  # Raw force data
+   #         ForcePlatformCalibration[:, :, plate_idx].T  # Transposed calibration matrix
+   #     )
+
+
+   #get the baseline data & assign to bias
+   # Extract specific channels into a new dictionary
+   # Extract only the selected channels as a new TimeSeries
+    FP1 = force.get_subset(["F1X", "F1Y", "F1Z", "M1X", "M1Y", "M1Z"])
+    FP1_bias = FP1.get_ts_between_times(6.6, 6.9, inclusive=False)
+   #FP1.plot()
+
+    FP2 = force.get_subset(["F2X", "F2Y", "F2Z", "M2X", "M2Y", "M2Z"])
+    FP2_bias = FP2.get_ts_between_times(14.0, 14.25, inclusive=False)
+   #FP2.plot()
+
+   # De-bias each channel in the force data Force plate 1
+    for channel in FP1.data.keys():    
+       # Subtract the baseline mean from the entire channel
+        FP1.data[channel] -= np.mean(FP1_bias.data[channel])
+       
+   # De-bias each channel in the force data Force plate 2
+    for channel in FP2.data.keys():    
+       # Subtract the baseline mean from the entire channel
+        FP2.data[channel] -= np.mean(FP2_bias.data[channel])    
+
+    FP1_filtered = ktk.filters.butter(FP1, fc=20)
+    FP2_filtered = ktk.filters.butter(FP2, fc=20)
+
+    return FP1_filtered, FP2_filtered
 
 
 def transform_to_omega(angles_ts, omega_raw_ts, sequence="XYZ"):
@@ -411,6 +502,7 @@ def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: 
     omega_filt = ktk.filters.butter(omega, fc=5)
     alpha = ktk.filters.deriv(omega_filt)
 
+    FP1_filtered, FP2_filtered = process_cop(c3d_file_path)
     fp1 = FP1_filtered.copy()
     fp2 = FP2_filtered.copy()
     fp1.resample(120, kind="linear", in_place=True)
