@@ -535,7 +535,7 @@ if uploaded_file is not None:
        tmp.write(uploaded_file.read())
        selected_file_path = tmp.name
 
-if st.button("Run Analysis", type="primary"):
+if st.button("Process Data", type="primary"):
     if not selected_file_path:
         st.error("Select or upload a .c3d file first.")
     else:
