@@ -3,3 +3,4 @@ kineticstoolkit
 numpy
 scipy
 matplotlib
+plotly

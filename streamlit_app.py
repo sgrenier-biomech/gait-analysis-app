@@ -557,33 +557,48 @@ if "angles" in st.session_state and "results" in st.session_state and "markers" 
         joint_choice = st.selectbox("Select Joint:", ["HipL", "HipR", "KneeL", "KneeR", "AnkleL", "AnkleR"])
         angles_ts = st.session_state["angles"]
         if joint_choice in angles_ts.data:
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(angles_ts.time, angles_ts.data[joint_choice][:, 0], label="X (Flex/Ext)")
-            ax.plot(angles_ts.time, angles_ts.data[joint_choice][:, 1], label="Y (Ab/Ad)")
-            ax.plot(angles_ts.time, angles_ts.data[joint_choice][:, 2], label="Z (Rot)")
-            ax.set_title(f"{joint_choice} Angles")
-            ax.grid(True)
-            ax.legend()
-            st.pyplot(fig)
-            plt.close(fig)
+            import plotly.graph_objects as go
 
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=angles_ts.time, y=angles_ts.data[joint_choice][:, 0], mode='lines', name='X (Flex/Ext)'))
+            fig.add_trace(go.Scatter(x=angles_ts.time, y=angles_ts.data[joint_choice][:, 1], mode='lines', name='Y (Ab/Ad)'))
+            fig.add_trace(go.Scatter(x=angles_ts.time, y=angles_ts.data[joint_choice][:, 2], mode='lines', name='Z (Rot)'))
+            
+            fig.update_layout(
+                title=f"{joint_choice} Angles",
+                xaxis_title="Time (s)",
+                yaxis_title="Angle (degrees)",
+                hovermode="x unified",
+                template="plotly_dark",
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
     with tab2:
         results = st.session_state["results"]
         selected_key = st.selectbox("Select Metric:", list(results.keys()))
         if selected_key:
+            import plotly.graph_objects as go
             data = results[selected_key]
-            fig, ax = plt.subplots(figsize=(10, 4))
+            time_arr = np.linspace(0, len(data) / 120.0, len(data))
+
+            fig = go.Figure()
             if hasattr(data, "ndim") and data.ndim > 1 and data.shape[1] == 3:
-                ax.plot(data[:, 0], label="X")
-                ax.plot(data[:, 1], label="Y")
-                ax.plot(data[:, 2], label="Z")
+                fig.add_trace(go.Scatter(x=time_arr, y=data[:, 0], mode='lines', name='X'))
+                fig.add_trace(go.Scatter(x=time_arr, y=data[:, 1], mode='lines', name='Y'))
+                fig.add_trace(go.Scatter(x=time_arr, y=data[:, 2], mode='lines', name='Z'))
             else:
-                ax.plot(data, label=selected_key)
-            ax.set_title(selected_key)
-            ax.grid(True)
-            ax.legend()
-            st.pyplot(fig)
-            plt.close(fig)
+                fig.add_trace(go.Scatter(x=time_arr, y=data, mode='lines', name=selected_key))
+
+            fig.update_layout(
+                title=selected_key,
+                xaxis_title="Time (s)",
+                yaxis_title="Value",
+                hovermode="x unified",
+                template="plotly_dark",
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
     with tab3:
         st.markdown("### Client-Side 3D Animation Engine")
