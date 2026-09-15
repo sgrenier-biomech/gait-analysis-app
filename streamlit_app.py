@@ -304,7 +304,7 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
     data.segments.forEach(seg => {{
       const geom = new THREE.BufferGeometry();
       const posArr = new Float32Array(seg.markers.length * 3);
-      geom.setAttribute('positOption 3: Free Cloud Hosting via Streamlit Community Cloud (Best for Long-Term)ion', new THREE.BufferAttribute(posArr, 3));
+      geom.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
       const mat = new THREE.LineBasicMaterial({{ color: seg.color, linewidth: 3 }});
       const line = new THREE.Line(geom, mat);
       scene.add(line);
