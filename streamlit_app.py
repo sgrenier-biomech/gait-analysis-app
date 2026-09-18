@@ -645,9 +645,9 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   with active_tabs[0]:
     st.subheader("Step 1: Identify and Isolate One Gait Cycle")
     st.caption(
-        "Inspect sagittal joint kinematics. Click and drag with the Box Select"
-        " tool on the graph, or type the timestamps below to isolate one gait"
-        " cycle (heel strike to heel strike)."
+        "Inspect sagittal joint kinematics. Use the **Box Select** tool on the"
+        " plot toolbar to drag over a single cycle, or manually type the"
+        " bounds below."
     )
 
     angles_ts = st.session_state["angles"]
@@ -655,8 +655,21 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     t_max = float(angles_ts.time[-1])
 
     v = st.session_state.get("step1_version", 0)
+    k_start = f"input_t_start_{v}"
+    k_end = f"input_t_end_{v}"
 
-    # Dynamic joint dropdown from available keys
+    # Initialize session keys with true trial bounds
+    if "t_start" not in st.session_state or st.session_state["t_start"] < t_min:
+      st.session_state["t_start"] = t_min
+    if "t_end" not in st.session_state or st.session_state["t_end"] <= st.session_state["t_start"]:
+      st.session_state["t_end"] = min(t_min + 1.2, t_max)
+
+    if k_start not in st.session_state:
+      st.session_state[k_start] = float(st.session_state["t_start"])
+    if k_end not in st.session_state:
+      st.session_state[k_end] = float(st.session_state["t_end"])
+
+    # Joint selection dropdown
     available_keys = list(angles_ts.data.keys())
     preferred_order = ["AnkleR", "AnkleL", "KneeR", "KneeL", "HipR", "HipL"]
     joint_options = [j for j in preferred_order if j in available_keys]
@@ -667,15 +680,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     with joint_col:
       chosen_joint = st.selectbox("Inspection Joint:", joint_options)
 
-    # Ensure session bounds fall within valid trial timestamps
-    t_s = float(st.session_state.get("t_start", t_min))
-    t_e = float(st.session_state.get("t_end", min(t_min + 1.2, t_max)))
-    if t_s < t_min or t_s >= t_max:
-      t_s = t_min
-      t_e = min(t_min + 1.2, t_max)
-      st.session_state["t_start"] = t_s
-      st.session_state["t_end"] = t_e
-
+    # Build Plotly Figure
     import plotly.graph_objects as go
 
     fig_kin = go.Figure()
@@ -689,15 +694,17 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         )
     )
 
-    # Highlight the current selected cycle window
+    t_curr_s = float(st.session_state["t_start"])
+    t_curr_e = float(st.session_state["t_end"])
+
     fig_kin.add_vrect(
-        x0=t_s,
-        x1=t_e,
+        x0=t_curr_s,
+        x1=t_curr_e,
         fillcolor="rgba(34, 197, 94, 0.2)",
         line_width=2,
         line_dash="dash",
         line_color="#22c55e",
-        annotation_text="Selected Cycle Window",
+        annotation_text="Selected Window",
         annotation_position="top left",
     )
 
@@ -706,12 +713,12 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         xaxis_title="Time (s)",
         yaxis_title="Angle (deg)",
         template="plotly_dark",
-        dragmode="select",  # Default mouse tool to box select
+        dragmode="select",
         margin=dict(l=20, r=20, t=40, b=20),
-        uirevision=f"plot_rev_{v}",
+        uirevision=f"rev_{v}",
     )
 
-    # 1. Capture interactive user box selection / zoom directly from the plot
+    # Render interactive plot
     chart_event = st.plotly_chart(
         fig_kin,
         use_container_width=True,
@@ -720,22 +727,36 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         key=f"kinematics_chart_{v}",
     )
 
-    # If the user dragged a box on the chart, extract the start and end times
+    # -------------------------------------------------------------
+    # Capture Mouse Drag Selection and Force-Sync Input State
+    # -------------------------------------------------------------
     if chart_event and "selection" in chart_event:
-      boxes = chart_event["selection"].get("box", [])
-      if boxes and len(boxes) > 0 and "x" in boxes[0]:
-        x_range = boxes[0]["x"]
-        t_s = float(min(x_range))
-        t_e = float(max(x_range))
-        st.session_state["t_start"] = t_s
-        st.session_state["t_end"] = t_e
+      selection_dict = chart_event["selection"]
+      x_vals = None
 
-    # 2. Controls & Numeric Confirmation
-    default_start = t_min
-    default_end = float(min(t_min + 1.2, t_max))
-    k_start = f"input_t_start_{v}"
-    k_end = f"input_t_end_{v}"
+      # Check box selections
+      if "box" in selection_dict and len(selection_dict["box"]) > 0:
+        box = selection_dict["box"][0]
+        if "x" in box and len(box["x"]) >= 2:
+          x_vals = box["x"]
+      # Check point range if box points were returned
+      elif "points" in selection_dict and len(selection_dict["points"]) > 1:
+        pts_x = [p["x"] for p in selection_dict["points"] if "x" in p]
+        if pts_x:
+          x_vals = [min(pts_x), max(pts_x)]
 
+      if x_vals:
+        new_s = round(float(min(x_vals)), 3)
+        new_e = round(float(max(x_vals)), 3)
+        # Only update and rerun if the selection differs from the current values
+        if abs(new_s - st.session_state["t_start"]) > 0.005 or abs(new_e - st.session_state["t_end"]) > 0.005:
+          st.session_state["t_start"] = new_s
+          st.session_state["t_end"] = new_e
+          st.session_state[k_start] = new_s
+          st.session_state[k_end] = new_e
+          st.rerun()
+
+    # Inputs & Decision Controls
     st.markdown("#### 🎯 Student Decision: Set Cycle Bounds")
     c_col1, c_col2, c_col3, c_col4 = st.columns([2, 2, 1.2, 1])
 
@@ -744,7 +765,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           "Cycle Initial Contact (s):",
           min_value=t_min,
           max_value=t_max,
-          value=t_s,
           step=0.01,
           format="%.3f",
           key=k_start,
@@ -754,11 +774,11 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           "Next Initial Contact (s):",
           min_value=t_min,
           max_value=t_max,
-          value=t_e,
           step=0.01,
           format="%.3f",
           key=k_end,
       )
+
     with c_col3:
       st.write("")
       st.write("")
@@ -770,18 +790,19 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           st.rerun()
         else:
           st.error("End time must be greater than start time.")
+
     with c_col4:
       st.write("")
       st.write("")
       if st.button("Reset Selection"):
         st.session_state["cycle_locked"] = False
         st.session_state["filter_locked"] = False
-        st.session_state["t_start"] = default_start
-        st.session_state["t_end"] = default_end
+        st.session_state["t_start"] = t_min
+        st.session_state["t_end"] = min(t_min + 1.2, t_max)
         st.session_state["step1_version"] = v + 1
         st.rerun()
 
-    if st.session_state["cycle_locked"]:
+    if st.session_state.get("cycle_locked", False):
       st.success(
           f"Cycle locked: {st.session_state['t_start']:.3f}s to"
           f" {st.session_state['t_end']:.3f}s. Proceed to Step 2 above."
