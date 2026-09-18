@@ -656,49 +656,61 @@ if (
     )
     st.plotly_chart(fig_kin, use_container_width=True)
 
-    # Cycle Decision Controls
+# Ensure keys exist in session_state before widget instantiation
+    if "input_t_start" not in st.session_state:
+        st.session_state["input_t_start"] = st.session_state["t_start"]
+    if "input_t_end" not in st.session_state:
+        st.session_state["input_t_end"] = st.session_state["t_end"]
+
     st.markdown("#### 🎯 Student Decision: Set Cycle Bounds")
     c_col1, c_col2, c_col3, c_col4 = st.columns([2, 2, 1.2, 1])
 
     with c_col1:
-      t_start_input = st.number_input(
-          "Cycle Initial Contact (s):",
-          min_value=t_min,
-          max_value=t_max,
-          value=t_s,
-          step=0.01,
-          format="%.3f",
-      )
+        t_start_input = st.number_input(
+            "Cycle Initial Contact (s):",
+            min_value=t_min,
+            max_value=t_max,
+            step=0.01,
+            format="%.3f",
+            key="input_t_start"
+        )
     with c_col2:
-      t_end_input = st.number_input(
-          "Next Initial Contact (s):",
-          min_value=t_min,
-          max_value=t_max,
-          value=t_e,
-          step=0.01,
-          format="%.3f",
-      )
+        t_end_input = st.number_input(
+            "Next Initial Contact (s):",
+            min_value=t_min,
+            max_value=t_max,
+            step=0.01,
+            format="%.3f",
+            key="input_t_end"
+        )
     with c_col3:
-      st.write("")
-      st.write("")
-      if st.button("Lock In Gait Cycle", type="primary"):
-        if t_end_input > t_start_input:
-          st.session_state["t_start"] = t_start_input
-          st.session_state["t_end"] = t_end_input
-          st.session_state["cycle_locked"] = True
-          st.rerun()
-        else:
-          st.error("End time must be greater than start time.")
+        st.write("")
+        st.write("")
+        if st.button("Lock In Gait Cycle", type="primary"):
+            if st.session_state["input_t_end"] > st.session_state["input_t_start"]:
+                st.session_state["t_start"] = st.session_state["input_t_start"]
+                st.session_state["t_end"] = st.session_state["input_t_end"]
+                st.session_state["cycle_locked"] = True
+                st.rerun()
+            else:
+                st.error("End time must be greater than start time.")
     with c_col4:
-      st.write("")
-      st.write("")
-      # Reset button relocks downstream steps and restores initial bounds
-      if st.button("Reset Selection"):
-        st.session_state["cycle_locked"] = False
-        st.session_state["filter_locked"] = False
-        st.session_state["t_start"] = t_min
-        st.session_state["t_end"] = float(min(t_min + 1.2, t_max))
-        st.rerun()
+        st.write("")
+        st.write("")
+        if st.button("Reset Selection"):
+            # Reset workflow locks
+            st.session_state["cycle_locked"] = False
+            st.session_state["filter_locked"] = False
+            
+            # Reset values and widget state keys
+            default_start = t_min
+            default_end = float(min(t_min + 1.2, t_max))
+            
+            st.session_state["t_start"] = default_start
+            st.session_state["t_end"] = default_end
+            st.session_state["input_t_start"] = default_start
+            st.session_state["input_t_end"] = default_end
+            st.rerun()
 
     if st.session_state["cycle_locked"]:
       st.success(
