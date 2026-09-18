@@ -656,7 +656,20 @@ if (
     )
     st.plotly_chart(fig_kin, use_container_width=True)
 
-# Ensure keys exist in session_state before widget instantiation
+# 1. Define callback function that runs BEFORE widgets re-render
+    def reset_step1_callback():
+        st.session_state["cycle_locked"] = False
+        st.session_state["filter_locked"] = False
+        
+        default_start = t_min
+        default_end = float(min(t_min + 1.2, t_max))
+        
+        st.session_state["t_start"] = default_start
+        st.session_state["t_end"] = default_end
+        st.session_state["input_t_start"] = default_start
+        st.session_state["input_t_end"] = default_end
+
+    # Ensure keys exist before widget creation
     if "input_t_start" not in st.session_state:
         st.session_state["input_t_start"] = st.session_state["t_start"]
     if "input_t_end" not in st.session_state:
@@ -666,7 +679,7 @@ if (
     c_col1, c_col2, c_col3, c_col4 = st.columns([2, 2, 1.2, 1])
 
     with c_col1:
-        t_start_input = st.number_input(
+        st.number_input(
             "Cycle Initial Contact (s):",
             min_value=t_min,
             max_value=t_max,
@@ -675,7 +688,7 @@ if (
             key="input_t_start"
         )
     with c_col2:
-        t_end_input = st.number_input(
+        st.number_input(
             "Next Initial Contact (s):",
             min_value=t_min,
             max_value=t_max,
@@ -697,20 +710,8 @@ if (
     with c_col4:
         st.write("")
         st.write("")
-        if st.button("Reset Selection"):
-            # Reset workflow locks
-            st.session_state["cycle_locked"] = False
-            st.session_state["filter_locked"] = False
-            
-            # Reset values and widget state keys
-            default_start = t_min
-            default_end = float(min(t_min + 1.2, t_max))
-            
-            st.session_state["t_start"] = default_start
-            st.session_state["t_end"] = default_end
-            st.session_state["input_t_start"] = default_start
-            st.session_state["input_t_end"] = default_end
-            st.rerun()
+        # Pass the callback directly to the button
+        st.button("Reset Selection", on_click=reset_step1_callback)
 
     if st.session_state["cycle_locked"]:
       st.success(
