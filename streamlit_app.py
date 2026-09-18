@@ -635,24 +635,33 @@ if (
         )
     )
 
-    # Visual highlight of selected window
-    t_s = st.session_state["t_start"]
-    t_e = st.session_state["t_end"]
-    fig_kin.add_vrect(
-        x0=t_s,
-        x1=t_e,
-        fillcolor="rgba(34, 197, 94, 0.15)",
-        line_width=1,
-        line_dash="dash",
-        line_color="#22c55e",
-        annotation_text="Selected Cycle",
-    )
+    # Only show the green bounding box if a cycle is actively locked,
+    # or show the current bounds if you prefer visual feedback
+    if st.session_state.get("cycle_locked", False):
+        t_s = st.session_state["t_start"]
+        t_e = st.session_state["t_end"]
+        fig_kin.add_vrect(
+            x0=t_s,
+            x1=t_e,
+            fillcolor="rgba(34, 197, 94, 0.15)",
+            line_width=1.5,
+            line_dash="dash",
+            line_color="#22c55e",
+            annotation_text="Locked Cycle",
+            annotation_position="top left",
+        )
+
     fig_kin.update_layout(
         title=f"{chosen_joint} Sagittal Angle (Flexion/Extension)",
         xaxis_title="Time (s)",
         yaxis_title="Angle (deg)",
         template="plotly_dark",
         margin=dict(l=20, r=20, t=40, b=20),
+        xaxis=dict(
+            range=[t_min, t_max],  # Explicitly enforce full dataset span
+            autorange=True         # Allow manual zooming, but reset snaps to full
+        ),
+        uirevision=str(st.session_state.get("step1_version", 0))  # Tells Plotly to reset view on Reset click!
     )
     st.plotly_chart(fig_kin, use_container_width=True)
 
