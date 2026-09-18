@@ -694,31 +694,25 @@ if "angles" in st.session_state and "results" in st.session_state and "markers" 
         with col_cop2:
             view_mode = st.radio("Plot Type:", ["COP vs Time", "2D Butterfly (COPx vs COPy)"], horizontal=True)
         with col_cop3:
-            fz_thresh = st.slider("Vertical Force Gate (N):", min_value=10, max_value=200, value=50, step=5,
-                                  help="Masks COP calculations when vertical force is below this threshold to avoid swing-phase division noise.")
+            fz_thresh = st.slider(
+                "Vertical Force Gate (N):", 
+                min_value=10, max_value=200, value=50, step=5,
+                help="Masks calculations during swing phase where low vertical force creates division asymptotes."
+            )
 
-        # Grab de-biased data from session state
+        # Retrieve selected plate data
         raw_fp = st.session_state["FP1_debiased"] if cop_plate == "FP1" else st.session_state["FP2_debiased"]
         
-        # Apply low-pass filter (20Hz standard for COP)
+        # 20 Hz low-pass filter
         fp_filt = ktk.filters.butter(raw_fp, fc=20)
 
         prefix = "1" if cop_plate == "FP1" else "2"
-        fx_key = f"F{prefix}X"
-        fy_key = f"F{prefix}Y"
-        fz_key = f"F{prefix}Z"
-        mx_key = f"M{prefix}X"
-        my_key = f"M{prefix}Y"
+        fz = fp_filt.data[f"F{prefix}Z"]
+        mx = fp_filt.data[f"M{prefix}X"]
+        my = fp_filt.data[f"M{prefix}Y"]
 
-        fz = fp_filt.data[fz_key]
-        mx = fp_filt.data[mx_key]
-        my = fp_filt.data[my_key]
-
-        # Calculate standard COP equations:
-        # COPx = -My / Fz
-        # COPy = +Mx / Fz
-        # Mask where vertical force is below stance threshold
         EPSILON = 1e-6
+        # Gate valid contact frames
         contact_mask = np.abs(fz) >= fz_thresh
 
         cop_x = np.where(contact_mask, -my / (fz + EPSILON), np.nan)
@@ -742,7 +736,7 @@ if "angles" in st.session_state and "results" in st.session_state and "markers" 
             ))
 
             fig.update_layout(
-                title=f"{cop_plate} Center of Pressure vs Time (Gated at |Fz| > {fz_thresh} N)",
+                title=f"{cop_plate} COP vs Time (|Fz| ≥ {fz_thresh} N)",
                 xaxis_title="Time (s)",
                 yaxis_title="COP Position (m)",
                 hovermode="x unified",
@@ -752,25 +746,47 @@ if "angles" in st.session_state and "results" in st.session_state and "markers" 
             st.plotly_chart(fig, use_container_width=True)
 
         else:
-            # 2D Planar Butterfly Plot
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=cop_x, y=cop_y,
-                mode='lines+markers',
-                marker=dict(size=3, color=fp_filt.time, colorscale='Viridis', showscale=True, colorbar=dict(title="Time (s)")),
-                line=dict(color="rgba(255, 255, 255, 0.4)", width=1.5),
-                name=f"{cop_plate} COP Path"
-            ))
+            # 2D Planar Butterfly Plot (COPx vs COPy)
+            # Filter out swing phase (NaNs) to keep valid points only
+            valid_indices = np.where(contact_mask)[0]
 
-            fig.update_layout(
-                title=f"{cop_plate} Planar Butterfly Path (COPx vs COPy)",
-                xaxis_title="Medio-Lateral COPx (m)",
-                yaxis_title="Antero-Posterior COPy (m)",
-                template="plotly_dark",
-                yaxis=dict(scaleanchor="x", scaleratio=1),  # Equal aspect ratio for spatial accuracy
-                margin=dict(l=20, r=20, t=40, b=20)
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            if len(valid_indices) == 0:
+                st.warning(f"No foot contact detected above {fz_thresh} N on {cop_plate}. Try lowering the gate threshold.")
+            else:
+                x_valid = cop_x[valid_indices]
+                y_valid = cop_y[valid_indices]
+                time_valid = fp_filt.time[valid_indices]
+
+                fig = go.Figure()
+
+                # Detect gaps between consecutive contact frames to draw distinct stance strokes
+                frame_gaps = np.where(np.diff(valid_indices) > 1)[0]
+                starts = np.insert(frame_gaps + 1, 0, 0)
+                ends = np.append(frame_gaps + 1, len(valid_indices))
+
+                # Plot each footstrike trajectory cleanly without connecting lines across swing phases
+                for i, (s, e) in enumerate(zip(starts, ends)):
+                    fig.add_trace(go.Scatter(
+                        x=x_valid[s:e],
+                        y=y_valid[s:e],
+                        mode='lines+markers',
+                        marker=dict(size=4, color=time_valid[s:e], colorscale='Turbo', cmin=fp_filt.time[0], cmax=fp_filt.time[-1], showscale=(i == 0), colorbar=dict(title="Time (s)")),
+                        line=dict(color='rgba(255, 255, 255, 0.6)', width=2),
+                        name=f"Strike {i + 1}",
+                        hovertext=[f"Time: {t:.2f}s" for t in time_valid[s:e]],
+                        hoverinfo="text+x+y"
+                    ))
+
+                fig.update_layout(
+                    title=f"{cop_plate} Butterfly Plot: COPx (Medio-Lateral) vs COPy (Antero-Posterior)",
+                    xaxis_title="COPx (m)",
+                    yaxis_title="COPy (m)",
+                    template="plotly_dark",
+                    showlegend=True,
+                    yaxis=dict(scaleanchor="x", scaleratio=1),
+                    margin=dict(l=20, r=20, t=40, b=20)
+                )
+                st.plotly_chart(fig, use_container_width=True)
     
     with tab5:
         st.markdown("### Client-Side 3D Animation Engine")
