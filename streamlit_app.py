@@ -425,6 +425,11 @@ def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: 
 
     raw_analogs = ktk.read_c3d(c3d_file_path)["Analogs"]  # Completely raw, un-debiased
     
+    # Align analog time origin to kinematic marker time
+    t0_kinematics = float(markers.time[0])
+    t0_analog = float(raw_analogs.time[0])
+    time_offset = t0_kinematics - t0_analog
+  
     fplate = ktk.read_c3d(c3d_file_path)["ForcePlatforms"]
     fplate.resample(120, kind="linear", in_place=True)
     fplate = ktk.filters.median(fplate, window_length=5)
@@ -511,6 +516,16 @@ def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: 
     fp2 = FP2_filtered.copy()
     fp1.resample(120, kind="linear", in_place=True)
     fp2.resample(120, kind="linear", in_place=True)
+    
+    # Shift time vectors so GRF and Kinematics share the identical global clock
+    raw_analogs.time = raw_analogs.time + time_offset
+    FP1.time = FP1.time + time_offset
+    FP2.time = FP2.time + time_offset
+    if fp1 is not None:
+      fp1.time = fp1.time + time_offset
+    if fp2 is not None:
+      fp2.time = fp2.time + time_offset
+
 
     results = compute_inverse_dynamics(
         omega, alpha, com_accelerations, joint_positions, com_positions, fplate,
@@ -779,23 +794,40 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             horizontal=True,
             key="grf_plate_sel",
         )
+
+      # 1. Define raw_plate_ts FIRST so its time bounds exist for the slider
+      raw_plate_ts = (
+          st.session_state["FP1_raw"]
+          if plate_choice == "FP1"
+          else st.session_state["FP2_raw"]
+      )
+
       with c_col2:
         debias_choice = st.checkbox(
             "Apply Baseline Zeroing (De-bias)",
             value=st.session_state.get("apply_debias", False),
             key="apply_debias_cb",
         )
+
       with c_col3:
         if debias_choice:
+          # 2. Extract start and end times with proper underscores
+          trial_t_start = float(raw_plate_ts.time[0])
+          trial_t_end = float(raw_plate_ts.time[-1])
+
           default_interval = (
-              (6.6, 6.9) if plate_choice == "FP1" else (14.0, 14.25)
+              (trial_t_start + 0.2, trial_t_start + 0.6)
+              if plate_choice == "FP1"
+              else (trial_t_start + 1.0, trial_t_start + 1.4)
           )
+
           b_start, b_end = st.slider(
               "Quiescent Baseline Interval (s):",
-              min_value=0.0,
-              max_value=float(st.session_state["raw_analogs"].time[-1]),
+              min_value=trial_t_start,
+              max_value=trial_t_end,
               value=default_interval,
-              step=0.05,
+              step=0.01,
+              format="%.2f",
           )
 
       st.markdown("#### 2. Filtering Decisions")
@@ -819,8 +851,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         else:
           cutoff_fc = None
           st.caption("Displaying unfiltered raw signals.")
-
-      import copy
 
       raw_plate_ts = (
           st.session_state["FP1_raw"]
