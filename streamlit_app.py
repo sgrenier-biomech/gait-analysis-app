@@ -553,7 +553,12 @@ if st.button("Process Data", type="primary"):
 
 if "angles" in st.session_state and "results" in st.session_state and "markers" in st.session_state:
     st.markdown("---")
-    tab1, tab2, tab3, tab4 = st.tabs(["Joint Angles", "Forces & Moments", "GRF", "3D Interactive Animation"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "Joint Angles", 
+        "Forces & Moments", 
+        "GRF", 
+        "Center of Pressure (COP)"
+        "3D Interactive Animation"])
 
     with tab1:
         joint_choice = st.selectbox("Select Joint:", ["HipL", "HipR", "KneeL", "KneeR", "AnkleL", "AnkleR"])
@@ -678,8 +683,96 @@ if "angles" in st.session_state and "results" in st.session_state and "markers" 
             margin=dict(l=20, r=20, t=40, b=20)
         )
         st.plotly_chart(fig, use_container_width=True)
-        
+ 
     with tab4:
+        st.markdown("### Center of Pressure (COP) Explorer")
+        st.caption("Inspect COP trajectories over time or 2D butterfly displacement paths.")
+
+        col_cop1, col_cop2, col_cop3 = st.columns(3)
+        with col_cop1:
+            cop_plate = st.radio("Select Plate:", ["FP1", "FP2"], horizontal=True, key="cop_plate_sel")
+        with col_cop2:
+            view_mode = st.radio("Plot Type:", ["COP vs Time", "2D Butterfly (COPx vs COPy)"], horizontal=True)
+        with col_cop3:
+            fz_thresh = st.slider("Vertical Force Gate (N):", min_value=10, max_value=200, value=50, step=5,
+                                  help="Masks COP calculations when vertical force is below this threshold to avoid swing-phase division noise.")
+
+        # Grab de-biased data from session state
+        raw_fp = st.session_state["FP1_debiased"] if cop_plate == "FP1" else st.session_state["FP2_debiased"]
+        
+        # Apply low-pass filter (20Hz standard for COP)
+        fp_filt = ktk.filters.butter(raw_fp, fc=20)
+
+        prefix = "1" if cop_plate == "FP1" else "2"
+        fx_key = f"F{prefix}X"
+        fy_key = f"F{prefix}Y"
+        fz_key = f"F{prefix}Z"
+        mx_key = f"M{prefix}X"
+        my_key = f"M{prefix}Y"
+
+        fz = fp_filt.data[fz_key]
+        mx = fp_filt.data[mx_key]
+        my = fp_filt.data[my_key]
+
+        # Calculate standard COP equations:
+        # COPx = -My / Fz
+        # COPy = +Mx / Fz
+        # Mask where vertical force is below stance threshold
+        EPSILON = 1e-6
+        contact_mask = np.abs(fz) >= fz_thresh
+
+        cop_x = np.where(contact_mask, -my / (fz + EPSILON), np.nan)
+        cop_y = np.where(contact_mask, mx / (fz + EPSILON), np.nan)
+
+        import plotly.graph_objects as go
+
+        if view_mode == "COP vs Time":
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=fp_filt.time, y=cop_x,
+                mode='lines',
+                line=dict(color="#3b82f6", width=2),
+                name="COPx (M-L)"
+            ))
+            fig.add_trace(go.Scatter(
+                x=fp_filt.time, y=cop_y,
+                mode='lines',
+                line=dict(color="#ef4444", width=2),
+                name="COPy (A-P)"
+            ))
+
+            fig.update_layout(
+                title=f"{cop_plate} Center of Pressure vs Time (Gated at |Fz| > {fz_thresh} N)",
+                xaxis_title="Time (s)",
+                yaxis_title="COP Position (m)",
+                hovermode="x unified",
+                template="plotly_dark",
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        else:
+            # 2D Planar Butterfly Plot
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=cop_x, y=cop_y,
+                mode='lines+markers',
+                marker=dict(size=3, color=fp_filt.time, colorscale='Viridis', showscale=True, colorbar=dict(title="Time (s)")),
+                line=dict(color="rgba(255, 255, 255, 0.4)", width=1.5),
+                name=f"{cop_plate} COP Path"
+            ))
+
+            fig.update_layout(
+                title=f"{cop_plate} Planar Butterfly Path (COPx vs COPy)",
+                xaxis_title="Medio-Lateral COPx (m)",
+                yaxis_title="Antero-Posterior COPy (m)",
+                template="plotly_dark",
+                yaxis=dict(scaleanchor="x", scaleratio=1),  # Equal aspect ratio for spatial accuracy
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with tab5:
         st.markdown("### Client-Side 3D Animation Engine")
         st.caption("Free mouse orbit and zoom. Quick anatomical preset buttons at the top-left.")
 
