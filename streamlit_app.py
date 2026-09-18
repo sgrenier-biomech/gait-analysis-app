@@ -607,6 +607,12 @@ if (
     t_min = float(angles_ts.time[0])
     t_max = float(angles_ts.time[-1])
 
+    # Ensure version counter exists
+    if "step1_version" not in st.session_state:
+      st.session_state["step1_version"] = 0
+
+    v = st.session_state["step1_version"]
+
     # Let students inspect the curve with Ankle joints included
     joint_col, _ = st.columns([1, 2])
     with joint_col:
@@ -619,7 +625,7 @@ if (
               "HipL",
               "AnkleR",
               "AnkleL",
-          ],  # Added ankle joints
+          ],
       )
 
     import plotly.graph_objects as go
@@ -635,46 +641,35 @@ if (
         )
     )
 
-    # Only show the green bounding box if a cycle is actively locked,
-    # or show the current bounds if you prefer visual feedback
-    if st.session_state.get("cycle_locked", False):
-        t_s = st.session_state["t_start"]
-        t_e = st.session_state["t_end"]
-        fig_kin.add_vrect(
-            x0=t_s,
-            x1=t_e,
-            fillcolor="rgba(34, 197, 94, 0.15)",
-            line_width=1.5,
-            line_dash="dash",
-            line_color="#22c55e",
-            annotation_text="Locked Cycle",
-            annotation_position="top left",
-        )
+    # Green window is always visible reflecting current bounds
+    t_s = float(st.session_state["t_start"])
+    t_e = float(st.session_state["t_end"])
+    fig_kin.add_vrect(
+        x0=t_s,
+        x1=t_e,
+        fillcolor="rgba(34, 197, 94, 0.2)",
+        line_width=2,
+        line_dash="dash",
+        line_color="#22c55e",
+        annotation_text="Selected Cycle Window",
+        annotation_position="top left",
+    )
 
+    # uirevision changes ONLY when clicking Reset Selection
     fig_kin.update_layout(
         title=f"{chosen_joint} Sagittal Angle (Flexion/Extension)",
         xaxis_title="Time (s)",
         yaxis_title="Angle (deg)",
         template="plotly_dark",
         margin=dict(l=20, r=20, t=40, b=20),
-        xaxis=dict(
-            range=[t_min, t_max],  # Explicitly enforce full dataset span
-            autorange=True         # Allow manual zooming, but reset snaps to full
-        ),
-        uirevision=str(st.session_state.get("step1_version", 0))  # Tells Plotly to reset view on Reset click!
+        uirevision=f"plot_rev_{v}",
     )
     st.plotly_chart(fig_kin, use_container_width=True)
 
-# 1. Define callback function that runs BEFORE widgets re-render
-    if "step1_version" not in st.session_state:
-        st.session_state["step1_version"] = 0
-        
-# Set default values for initial render
+    # Decision Controls & Dynamic Widget Keys
     default_start = t_min
     default_end = float(min(t_min + 1.2, t_max))
 
-    # Active key suffix tied to reset counter
-    v = st.session_state.get("step1_version", 0)
     k_start = f"input_t_start_{v}"
     k_end = f"input_t_end_{v}"
 
@@ -686,7 +681,7 @@ if (
           "Cycle Initial Contact (s):",
           min_value=t_min,
           max_value=t_max,
-          value=float(st.session_state["t_start"]),
+          value=t_s,
           step=0.01,
           format="%.3f",
           key=k_start,
@@ -696,7 +691,7 @@ if (
           "Next Initial Contact (s):",
           min_value=t_min,
           max_value=t_max,
-          value=float(st.session_state["t_end"]),
+          value=t_e,
           step=0.01,
           format="%.3f",
           key=k_end,
@@ -712,19 +707,17 @@ if (
           st.rerun()
         else:
           st.error("End time must be greater than start time.")
+
     with c_col4:
       st.write("")
       st.write("")
       if st.button("Reset Selection"):
-        # Reset locks
         st.session_state["cycle_locked"] = False
         st.session_state["filter_locked"] = False
 
-        # Reset times to defaults
         st.session_state["t_start"] = default_start
         st.session_state["t_end"] = default_end
 
-        # Bump version counter to force Streamlit to wipe the widget cache
         st.session_state["step1_version"] = v + 1
         st.rerun()
 
@@ -733,7 +726,7 @@ if (
           f"Cycle locked: {st.session_state['t_start']:.3f}s to"
           f" {st.session_state['t_end']:.3f}s (Duration:"
           f" {st.session_state['t_end'] - st.session_state['t_start']:.3f}s)."
-          " Proceed to Step 2."
+          " Step 2 (GRF Decisions) is now unlocked above!"
       )
   # =========================================================================
   # STEP 2: FORCE SIGNAL FILTERING DECISION
