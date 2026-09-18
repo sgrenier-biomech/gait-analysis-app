@@ -950,82 +950,85 @@ if st.session_state["cycle_locked"]:
   # =========================================================================
   # STEP 3: CENTER OF PRESSURE (COP) & PLANAR BUTTERFLY PLOT
   # =========================================================================
-        if st.session_state["filter_locked"]:
+      if st.session_state.get("filter_locked", False) and len(active_tabs) > 2:
           with active_tabs[2]:
             st.subheader("Step 3: Center of Pressure (COP) Analysis")
             fc_val = st.session_state.get('chosen_fc', 100)
             filt_name = st.session_state.get('chosen_filter', 'None (Raw)')
             filt_suffix = f" ({fc_val} Hz)" if filt_name == "Butterworth Low-pass" else ""
             debias_status = "Zeroed (Debiased)" if st.session_state.get('apply_debias', False) else "Raw (Non-Zeroed)"
+            chosen_plate = st.session_state.get("chosen_plate", "FP1")
 
             st.caption(
-                f"Calculated directly from your confirmed parameters: **{st.session_state['chosen_plate']}** | "
+                f"Calculated directly from your confirmed parameters: **{chosen_plate}** | "
                 f"Baseline: **{debias_status}** | "
                 f"Filter: **{filt_name}{filt_suffix}**"
             )
-      
-            # Extract the confirmed processed TimeSeries from Step 2
-            final_fp = st.session_state["cycle_fp_processed"]
-            plate_prefix = "1" if st.session_state["chosen_plate"] == "FP1" else "2"
-      
-            fz_key = f"F{plate_prefix}Z"
-            mx_key = f"M{plate_prefix}X"
-            my_key = f"M{plate_prefix}Y"
-      
-            fz = final_fp.data[fz_key]
-            mx = final_fp.data[mx_key]
-            my = final_fp.data[my_key]
-      
-            # Controls for threshold gate and display options
-            cop_ctrl1, cop_ctrl2 = st.columns([2, 2])
-            with cop_ctrl1:
-              fz_threshold = st.slider(
-                  "Vertical Force Gate (|Fz| ≥ N):",
-                  min_value=10.0,
-                  max_value=200.0,
-                  value=50.0,
-                  step=5.0,
-                  help=(
-                      "Masks calculations when the foot is off the plate to prevent"
-                      " division-by-zero asymptotes during swing phase."
-                  ),
-              )
-            with cop_ctrl2:
-              show_arrows = st.checkbox(
-                  "Show Direction of Progression Markers", value=True
-              )
-      
-            # Standard Biomechanical COP Equations:
-            # COPx = -My / Fz  (Medio-Lateral)
-            # COPy = +Mx / Fz  (Antero-Posterior)
-            EPSILON = 1e-6
-            contact_mask = np.abs(fz) >= fz_threshold
-      
-            cop_x = np.where(contact_mask, -my / (fz + EPSILON), np.nan)
-            cop_y = np.where(contact_mask, mx / (fz + EPSILON), np.nan)
-      
-            import plotly.graph_objects as go
-      
-            col_butterfly, col_timeseries = st.columns(2)
-      
-            # --- Left Panel: 2D Planar Butterfly Plot (COPx vs COPy) ---
-            with col_butterfly:
-              valid_indices = np.where(contact_mask)[0]
-              fig_butterfly = go.Figure()
-      
-              if len(valid_indices) == 0:
-                st.warning(
-                    f"No frames found where |Fz| ≥ {fz_threshold} N. Lower the"
-                    " vertical force gate slider above."
-                )
+
+            # Guard against missing data in session state
+            if "cycle_fp_processed" not in st.session_state:
+              st.warning("Processed force plate data not found. Please click 'Accept Force Processing Decisions' in Step 2.")
+            else:
+              final_fp = st.session_state["cycle_fp_processed"]
+              plate_prefix = "1" if chosen_plate == "FP1" else "2"
+
+              fz_key = f"F{plate_prefix}Z"
+              mx_key = f"M{plate_prefix}X"
+              my_key = f"M{plate_prefix}Y"
+
+              if fz_key not in final_fp.data or mx_key not in final_fp.data or my_key not in final_fp.data:
+                st.error(f"Missing force plate channels: {fz_key}, {mx_key}, or {my_key} in data.")
               else:
-                x_valid = cop_x[valid_indices]
-                y_valid = cop_y[valid_indices]
-                t_valid = final_fp.time[valid_indices]
-      
-                # Continuous line colored by progression of time
-                fig_butterfly.add_trace(
-                    go.Scatter(
+                fz = final_fp.data[fz_key]
+                mx = final_fp.data[mx_key]
+                my = final_fp.data[my_key]
+
+                # Adaptive gate slider based on actual peak forces in this cycle
+                max_fz = float(np.nanmax(np.abs(fz))) if len(fz) > 0 else 500.0
+                default_gate = min(40.0, max_fz * 0.15)
+
+                cop_ctrl1, cop_ctrl2 = st.columns([2, 2])
+                with cop_ctrl1:
+                  fz_threshold = st.slider(
+                      "Vertical Force Gate (|Fz| ≥ N):",
+                      min_value=5.0,
+                      max_value=max(100.0, float(np.ceil(max_fz))),
+                      value=float(default_gate),
+                      step=5.0,
+                      help="Masks data when foot is off the plate to prevent swing-phase division asymptotes."
+                  )
+                with cop_ctrl2:
+                  show_arrows = st.checkbox("Show Progression Markers", value=True)
+
+                # Standard Biomechanical COP Equations:
+                # COPx = -My / Fz  (Medio-Lateral)
+                # COPy = +Mx / Fz  (Antero-Posterior)
+                EPSILON = 1e-6
+                contact_mask = np.abs(fz) >= fz_threshold
+
+                cop_x = np.where(contact_mask, -my / (fz + EPSILON), np.nan)
+                cop_y = np.where(contact_mask, mx / (fz + EPSILON), np.nan)
+
+                import plotly.graph_objects as go
+
+                col_butterfly, col_timeseries = st.columns(2)
+
+                # --- Panel 1: 2D Planar Butterfly Plot (COPx vs COPy) ---
+                with col_butterfly:
+                  valid_indices = np.where(contact_mask)[0]
+                  fig_butterfly = go.Figure()
+
+                  if len(valid_indices) == 0:
+                    st.warning(
+                        f"No samples have |Fz| ≥ {fz_threshold:.1f} N (peak in this window is {max_fz:.1f} N). "
+                        "Lower the vertical force gate slider above."
+                    )
+                  else:
+                    x_valid = cop_x[valid_indices]
+                    y_valid = cop_y[valid_indices]
+                    t_valid = final_fp.time[valid_indices]
+
+                    fig_butterfly.add_trace(go.Scatter(
                         x=x_valid,
                         y=y_valid,
                         mode="lines+markers" if show_arrows else "lines",
@@ -1042,78 +1045,60 @@ if st.session_state["cycle_locked"]:
                             for t, x, y in zip(t_valid, x_valid, y_valid)
                         ],
                         hoverinfo="text",
-                        name="COP Path",
-                    )
-                )
-      
-                # Add initial contact (Heel Strike) and push-off (Toe Off) markers
-                fig_butterfly.add_trace(
-                    go.Scatter(
-                        x=[x_valid[0]],
-                        y=[y_valid[0]],
+                        name="COP Path"
+                    ))
+
+                    # Heel Strike & Toe Off boundary indicators
+                    fig_butterfly.add_trace(go.Scatter(
+                        x=[x_valid[0]], y=[y_valid[0]],
                         mode="markers+text",
                         marker=dict(size=12, color="#22c55e", symbol="star"),
-                        text=["Start (Initial Contact)"],
+                        text=["Heel Strike"],
                         textposition="top center",
-                        name="Initial Contact",
-                    )
-                )
-                fig_butterfly.add_trace(
-                    go.Scatter(
-                        x=[x_valid[-1]],
-                        y=[y_valid[-1]],
+                        name="Heel Strike"
+                    ))
+                    fig_butterfly.add_trace(go.Scatter(
+                        x=[x_valid[-1]], y=[y_valid[-1]],
                         mode="markers+text",
                         marker=dict(size=12, color="#ef4444", symbol="x"),
-                        text=["End (Toe Off)"],
+                        text=["Toe Off"],
                         textposition="bottom center",
-                        name="Toe Off",
-                    )
-                )
-      
-              fig_butterfly.update_layout(
-                  title="Planar Butterfly Path (COPx vs. COPy)",
-                  xaxis_title="Medio-Lateral Displacement COPx (m)",
-                  yaxis_title="Antero-Posterior Displacement COPy (m)",
-                  template="plotly_dark",
-                  yaxis=dict(scaleanchor="x", scaleratio=1),  # Preserve true aspect ratio
-                  margin=dict(l=20, r=20, t=40, b=20),
-                  legend=dict(
-                      orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-                  ),
-              )
-              st.plotly_chart(fig_butterfly, use_container_width=True)
-      
-            # --- Right Panel: COP Coordinates vs Time ---
-            with col_timeseries:
-              fig_ts = go.Figure()
-              fig_ts.add_trace(
-                  go.Scatter(
-                      x=final_fp.time,
-                      y=cop_x,
+                        name="Toe Off"
+                    ))
+
+                  fig_butterfly.update_layout(
+                      title="Planar Butterfly Path (COPx vs. COPy)",
+                      xaxis_title="Medio-Lateral COPx (m)",
+                      yaxis_title="Antero-Posterior COPy (m)",
+                      template="plotly_dark",
+                      yaxis=dict(scaleanchor="x", scaleratio=1),
+                      margin=dict(l=20, r=20, t=40, b=20),
+                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                  )
+                  st.plotly_chart(fig_butterfly, use_container_width=True)
+
+                # --- Panel 2: COP vs Time ---
+                with col_timeseries:
+                  fig_ts = go.Figure()
+                  fig_ts.add_trace(go.Scatter(
+                      x=final_fp.time, y=cop_x,
                       mode="lines",
                       line=dict(color="#3b82f6", width=2),
-                      name="COPx (Medio-Lateral)",
-                  )
-              )
-              fig_ts.add_trace(
-                  go.Scatter(
-                      x=final_fp.time,
-                      y=cop_y,
+                      name="COPx (M-L)"
+                  ))
+                  fig_ts.add_trace(go.Scatter(
+                      x=final_fp.time, y=cop_y,
                       mode="lines",
                       line=dict(color="#ef4444", width=2),
-                      name="COPy (Antero-Posterior)",
+                      name="COPy (A-P)"
+                  ))
+                  fig_ts.update_layout(
+                      title="COP Displacement vs. Time",
+                      xaxis_title="Time (s)",
+                      yaxis_title="Displacement (m)",
+                      template="plotly_dark",
+                      hovermode="x unified",
+                      margin=dict(l=20, r=20, t=40, b=20),
+                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                   )
-              )
-      
-              fig_ts.update_layout(
-                  title="COP Displacement Components vs. Time",
-                  xaxis_title="Time (s)",
-                  yaxis_title="Displacement (m)",
-                  template="plotly_dark",
-                  hovermode="x unified",
-                  margin=dict(l=20, r=20, t=40, b=20),
-                  legend=dict(
-                      orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-                  ),
-              )
-              st.plotly_chart(fig_ts, use_container_width=True)
+                  st.plotly_chart(fig_ts, use_container_width=True)
