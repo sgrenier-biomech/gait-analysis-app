@@ -733,6 +733,8 @@ if (
   # STEP 2: FORCE SIGNAL FILTERING DECISION
   # =========================================================================
 if st.session_state["cycle_locked"]:
+
+  if st.session_state["cycle_locked"]:
     with active_tabs[1]:
       st.subheader("Step 2: Ground Reaction Force (GRF) Processing Decisions")
       st.caption(
@@ -750,14 +752,14 @@ if st.session_state["cycle_locked"]:
         with w_col1:
           ref_t_start = st.number_input(
               "Adjust Cycle Start (s):",
-              value=st.session_state["t_start"],
+              value=float(st.session_state["t_start"]),
               step=0.005,
               format="%.3f",
           )
         with w_col2:
           ref_t_end = st.number_input(
               "Adjust Cycle End (s):",
-              value=st.session_state["t_end"],
+              value=float(st.session_state["t_end"]),
               step=0.005,
               format="%.3f",
           )
@@ -774,7 +776,7 @@ if st.session_state["cycle_locked"]:
               st.error("End time must be greater than start time.")
 
       # ---------------------------------------------------------
-      # Signal Decision Controls
+      # 1. Force Plate & Baseline Zeroing Decisions
       # ---------------------------------------------------------
       st.markdown("#### 1. Force Plate & Baseline Zeroing Decisions")
       c_col1, c_col2, c_col3 = st.columns(3)
@@ -788,21 +790,16 @@ if st.session_state["cycle_locked"]:
         )
 
       with c_col2:
+        # Defaults to False (un-zeroed/raw)
         debias_choice = st.checkbox(
             "Apply Baseline Zeroing (De-bias)",
             value=st.session_state.get("apply_debias", False),
-            help=(
-                "Subtracts baseline offset measured during quiescent phase"
-                " before footstrike."
-            ),
+            help="Subtracts baseline offset measured during quiescent phase before footstrike."
         )
 
       with c_col3:
         if debias_choice:
-          # Define quiescent baseline intervals
-          default_interval = (
-              (6.6, 6.9) if plate_choice == "FP1" else (14.0, 14.25)
-          )
+          default_interval = (6.6, 6.9) if plate_choice == "FP1" else (14.0, 14.25)
           b_start, b_end = st.slider(
               "Baseline Sampling Interval (s):",
               min_value=0.0,
@@ -811,12 +808,16 @@ if st.session_state["cycle_locked"]:
               step=0.05,
           )
 
+      # ---------------------------------------------------------
+      # 2. Filtering Decisions
+      # ---------------------------------------------------------
       st.markdown("#### 2. Filtering Decisions")
       f_col1, f_col2 = st.columns(2)
       with f_col1:
+        # Default to "None (Raw)" as index 0
         filter_mode = st.selectbox(
             "Filter Algorithm:",
-            ["Butterworth Low-pass", "None (Raw)"],
+            ["None (Raw)", "Butterworth Low-pass"],
             index=0,
         )
 
@@ -826,18 +827,16 @@ if st.session_state["cycle_locked"]:
               "Cutoff Frequency Fc (Hz):",
               min_value=5,
               max_value=200,
-              value=st.session_state.get("chosen_fc", 100),  # Defaults to 100 Hz
+              value=st.session_state.get("chosen_fc", 100),
               step=5,
-              help=(
-                  "Starts at 100 Hz (minimal attenuation). Lower this value to"
-                  " eliminate high-frequency vibration/impact artifacts."
-              ),
+              help="Lower this cutoff value to eliminate high-frequency impact or vibration noise."
           )
         else:
           cutoff_fc = None
+          st.caption("Displaying unfiltered raw signals.")
 
       # ---------------------------------------------------------
-      # Process the Signals Based on Student Decisions
+      # Signal Extraction & Processing
       # ---------------------------------------------------------
       raw_analogs = st.session_state["raw_analogs"]
       channels = (
@@ -845,37 +844,38 @@ if st.session_state["cycle_locked"]:
           if plate_choice == "FP1"
           else ["F2X", "F2Y", "F2Z", "M2X", "M2Y", "M2Z"]
       )
+      
+      # Work on a fresh copy so session_state remains pristine
       fp_working = raw_analogs.get_subset(channels)
+      fp_working.data = {k: np.copy(v) for k, v in fp_working.data.items()}
 
-      # Scale forces to Newtons (x -1000)
-      for k in [f"{plate_choice[0:2]}X", f"{plate_choice[0:2]}Y", f"{plate_choice[0:2]}Z"]:
+      # Scale forces to Newtons (-1000)
+      p = "1" if plate_choice == "FP1" else "2"
+      for k in [f"F{p}X", f"F{p}Y", f"F{p}Z"]:
         if k in fp_working.data:
           fp_working.data[k] = fp_working.data[k] * -1000.0
 
-      # Optional student debiasing
+      # Apply baseline zeroing ONLY if requested
       if debias_choice:
-        bias_ts = fp_working.get_ts_between_times(
-            b_start, b_end, inclusive=False
-        )
+        bias_ts = fp_working.get_ts_between_times(b_start, b_end, inclusive=False)
         for k in fp_working.data.keys():
           fp_working.data[k] -= np.mean(bias_ts.data[k])
 
-      # Trim down to the student's chosen gait cycle window
+      # Slice to the student's selected gait cycle window
       cycle_fp_raw = fp_working.get_ts_between_times(
           st.session_state["t_start"], st.session_state["t_end"], inclusive=True
       )
 
-      # Apply student filter choice
+      # Apply filter only if Butterworth Low-pass is chosen
       cycle_fp_filt = None
-      if filter_mode == "Butterworth Low-pass":
+      if filter_mode == "Butterworth Low-pass" and cutoff_fc is not None:
         cycle_fp_filt = ktk.filters.butter(cycle_fp_raw, fc=cutoff_fc)
 
       # ---------------------------------------------------------
-      # Render Interactive Visual Comparison
+      # Render Interactive Plot
       # ---------------------------------------------------------
       import plotly.graph_objects as go
 
-      p = "1" if plate_choice == "FP1" else "2"
       axes = [
           ("X (M-L)", f"F{p}X", "#ef4444"),
           ("Y (A-P)", f"F{p}Y", "#22c55e"),
@@ -884,23 +884,29 @@ if st.session_state["cycle_locked"]:
 
       fig_grf = go.Figure()
       for label, ch, color in axes:
-        # Initial Raw/Unfiltered trace
-        fig_grf.add_trace(
-            go.Scatter(
-                x=cycle_fp_raw.time,
-                y=cycle_fp_raw.data[ch],
-                mode="lines",
-                line=dict(
-                    color=color,
-                    dash="dot" if cycle_fp_filt is not None else "solid",
-                    width=1.5 if cycle_fp_filt is not None else 2.5,
-                ),
-                opacity=0.5 if cycle_fp_filt is not None else 1.0,
-                name=f"{label} Raw{' (Debiased)' if debias_choice else ''}",
-            )
-        )
-        # Filtered trace overlay
-        if cycle_fp_filt is not None:
+        if cycle_fp_filt is None:
+          # Pure raw display (Default)
+          fig_grf.add_trace(
+              go.Scatter(
+                  x=cycle_fp_raw.time,
+                  y=cycle_fp_raw.data[ch],
+                  mode="lines",
+                  line=dict(color=color, width=2.5),
+                  name=f"{label} {'(Zeroed)' if debias_choice else '(Raw)'}",
+              )
+          )
+        else:
+          # Filtered mode: Faded raw trace + solid filtered trace
+          fig_grf.add_trace(
+              go.Scatter(
+                  x=cycle_fp_raw.time,
+                  y=cycle_fp_raw.data[ch],
+                  mode="lines",
+                  line=dict(color=color, dash="dot", width=1.5),
+                  opacity=0.45,
+                  name=f"{label} Raw",
+              )
+          )
           fig_grf.add_trace(
               go.Scatter(
                   x=cycle_fp_filt.time,
@@ -912,16 +918,11 @@ if st.session_state["cycle_locked"]:
           )
 
       status_text = (
-          f"Zeroed (Debiased) | Filter: {cutoff_fc} Hz"
-          if debias_choice and cycle_fp_filt is not None
-          else (
-              "Raw (Non-Zeroed) | Filtered"
-              if cycle_fp_filt is not None
-              else "Raw Unfiltered"
-          )
+          f"Baseline: {'Zeroed' if debias_choice else 'Raw'} | Filter: {filter_mode}"
+          + (f" ({cutoff_fc} Hz)" if cutoff_fc else "")
       )
       fig_grf.update_layout(
-          title=f"{plate_choice} Force Traces — [{status_text}]",
+          title=f"{plate_choice} Cycle Forces — [{status_text}]",
           xaxis_title="Time (s)",
           yaxis_title="Force (N)",
           template="plotly_dark",
@@ -930,21 +931,22 @@ if st.session_state["cycle_locked"]:
       )
       st.plotly_chart(fig_grf, use_container_width=True)
 
-      # Lock-in button to progress to Step 3
+      # ---------------------------------------------------------
+      # Lock-in Decision Button
+      # ---------------------------------------------------------
       st.markdown("#### 🎯 Confirm Decisions")
       if st.button("Accept Force Processing Decisions", type="primary"):
         st.session_state["chosen_plate"] = plate_choice
         st.session_state["apply_debias"] = debias_choice
         st.session_state["chosen_filter"] = filter_mode
         st.session_state["chosen_fc"] = cutoff_fc if cutoff_fc else 100
-        # Store processed TimeSeries for downstream COP calculation
         st.session_state["cycle_fp_processed"] = (
             cycle_fp_filt if cycle_fp_filt is not None else cycle_fp_raw
         )
         st.session_state["filter_locked"] = True
-        st.success("Decisions saved! Proceeding to Step 3.")
+        st.success("Decisions saved! Step 3 (COP Analysis) is now unlocked above.")
         st.rerun()
-        
+    
   # =========================================================================
   # STEP 3: CENTER OF PRESSURE (COP) & PLANAR BUTTERFLY PLOT
   # =========================================================================
