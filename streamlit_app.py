@@ -639,14 +639,15 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
   active_tabs = st.tabs(tab_labels)
 
-  # =========================================================================
+# =========================================================================
   # STEP 1: KINEMATICS & GAIT CYCLE IDENTIFICATION
   # =========================================================================
   with active_tabs[0]:
     st.subheader("Step 1: Identify and Isolate One Gait Cycle")
     st.caption(
-        "Inspect sagittal joint kinematics to identify consecutive heel"
-        " strikes (0% to 100% of a single cycle)."
+        "Inspect sagittal joint kinematics. Click and drag with the Box Select"
+        " tool on the graph, or type the timestamps below to isolate one gait"
+        " cycle (heel strike to heel strike)."
     )
 
     angles_ts = st.session_state["angles"]
@@ -666,6 +667,15 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     with joint_col:
       chosen_joint = st.selectbox("Inspection Joint:", joint_options)
 
+    # Ensure session bounds fall within valid trial timestamps
+    t_s = float(st.session_state.get("t_start", t_min))
+    t_e = float(st.session_state.get("t_end", min(t_min + 1.2, t_max)))
+    if t_s < t_min or t_s >= t_max:
+      t_s = t_min
+      t_e = min(t_min + 1.2, t_max)
+      st.session_state["t_start"] = t_s
+      st.session_state["t_end"] = t_e
+
     import plotly.graph_objects as go
 
     fig_kin = go.Figure()
@@ -679,8 +689,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         )
     )
 
-    t_s = float(st.session_state["t_start"])
-    t_e = float(st.session_state["t_end"])
+    # Highlight the current selected cycle window
     fig_kin.add_vrect(
         x0=t_s,
         x1=t_e,
@@ -697,12 +706,31 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         xaxis_title="Time (s)",
         yaxis_title="Angle (deg)",
         template="plotly_dark",
+        dragmode="select",  # Default mouse tool to box select
         margin=dict(l=20, r=20, t=40, b=20),
         uirevision=f"plot_rev_{v}",
     )
-    st.plotly_chart(fig_kin, use_container_width=True)
 
-    # Inputs & Decision Controls
+    # 1. Capture interactive user box selection / zoom directly from the plot
+    chart_event = st.plotly_chart(
+        fig_kin,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode=["box"],
+        key=f"kinematics_chart_{v}",
+    )
+
+    # If the user dragged a box on the chart, extract the start and end times
+    if chart_event and "selection" in chart_event:
+      boxes = chart_event["selection"].get("box", [])
+      if boxes and len(boxes) > 0 and "x" in boxes[0]:
+        x_range = boxes[0]["x"]
+        t_s = float(min(x_range))
+        t_e = float(max(x_range))
+        st.session_state["t_start"] = t_s
+        st.session_state["t_end"] = t_e
+
+    # 2. Controls & Numeric Confirmation
     default_start = t_min
     default_end = float(min(t_min + 1.2, t_max))
     k_start = f"input_t_start_{v}"
@@ -758,7 +786,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           f"Cycle locked: {st.session_state['t_start']:.3f}s to"
           f" {st.session_state['t_end']:.3f}s. Proceed to Step 2 above."
       )
-
 # =========================================================================
   # STEP 2: GRF DECISIONS
   # =========================================================================
