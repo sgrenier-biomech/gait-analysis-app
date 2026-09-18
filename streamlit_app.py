@@ -7,6 +7,7 @@ Created on Mon Sep 14 15:10:00 2026
 """
 import json
 import tempfile
+import copy
 from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
@@ -515,7 +516,7 @@ def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: 
         omega, alpha, com_accelerations, joint_positions, com_positions, fplate,
         mass_total, height_total, FP1_filtered=fp1, FP2_filtered=fp2
     )
-    return markers, angles, results, FP1, FP2, raw_analogs
+    return markers, angles, results, FP1, fp1, FP2, fp2, raw_analogs
 
 
 # =======================================================
@@ -544,21 +545,30 @@ if st.button("Process Data", type="primary"):
     else:
         with st.spinner("Processing file..."):
             try:
-                markers, angles, results, FP1, FP2, raw_analogs = run_segment_kinematics(selected_file_path, mass, height)
+                markers, angles, results, FP1_raw, fp1_filt, FP2_raw, fp2_filt, raw_analogs = run_segment_kinematics(
+                    selected_file_path, mass, height
+                )
+                
                 st.session_state["markers"] = markers
                 st.session_state["angles"] = angles
                 st.session_state["results"] = results
-                st.session_state["FP1_debiased"] = FP1
-                st.session_state["FP2_debiased"] = FP2
+                
+                # Store both raw and default-filtered versions
+                st.session_state["FP1_raw"] = FP1_raw
+                st.session_state["FP2_raw"] = FP2_raw
+                st.session_state["FP1_default_filt"] = fp1_filt
+                st.session_state["FP2_default_filt"] = fp2_filt
                 st.session_state["raw_analogs"] = raw_analogs
-
-                # Default states for student decisions
+                
+                # Workflow and decision states
                 st.session_state["cycle_locked"] = False
                 st.session_state["filter_locked"] = False
                 st.session_state["t_start"] = float(angles.time[0])
                 st.session_state["t_end"] = float(min(angles.time[0] + 1.2, angles.time[-1]))
-                st.session_state["chosen_fc"] = 100  # Default initial high cutoff
-                st.session_state["apply_debias"] = True
+                st.session_state["chosen_fc"] = 100
+                st.session_state["apply_debias"] = False
+                
+                st.success("Analysis completed! Begin with Step 1 below.")
             except Exception as e:
                 st.error(f"Error: {e}")
 
@@ -838,44 +848,41 @@ if st.session_state["cycle_locked"]:
       # ---------------------------------------------------------
       # Signal Extraction & Processing
       # ---------------------------------------------------------
-      raw_analogs = st.session_state["raw_analogs"]
-      channels = (
-          ["F1X", "F1Y", "F1Z", "M1X", "M1Y", "M1Z"]
+
+      # 1. Grab the raw TimeSeries directly from the user's plate choice
+      raw_plate_ts = (
+          st.session_state["FP1_raw"]
           if plate_choice == "FP1"
-          else ["F2X", "F2Y", "F2Z", "M2X", "M2Y", "M2Z"]
+          else st.session_state["FP2_raw"]
       )
-      
-      # Work on a fresh copy so session_state remains pristine
-      fp_working = raw_analogs.get_subset(channels)
-      fp_working.data = {k: np.copy(v) for k, v in fp_working.data.items()}
 
-      # Scale forces to Newtons (-1000)
-      p = "1" if plate_choice == "FP1" else "2"
-      for k in [f"F{p}X", f"F{p}Y", f"F{p}Z"]:
-        if k in fp_working.data:
-          fp_working.data[k] = fp_working.data[k] * -1000.0
+      # 2. Deep copy so operations never mutate the pristine raw session data
+      fp_working = copy.deepcopy(raw_plate_ts)
 
-      # Apply baseline zeroing ONLY if requested
+      # 3. Apply baseline subtraction ONLY if checked
       if debias_choice:
-        bias_ts = fp_working.get_ts_between_times(b_start, b_end, inclusive=False)
+        bias_ts = fp_working.get_ts_between_times(
+            b_start, b_end, inclusive=False
+        )
         for k in fp_working.data.keys():
-          fp_working.data[k] -= np.mean(bias_ts.data[k])
+          fp_working.data[k] -= np.nanmean(bias_ts.data[k])
 
-      # Slice to the student's selected gait cycle window
+      # 4. Slice to the student's selected gait cycle window
       cycle_fp_raw = fp_working.get_ts_between_times(
           st.session_state["t_start"], st.session_state["t_end"], inclusive=True
       )
 
-      # Apply filter only if Butterworth Low-pass is chosen
+      # 5. Apply filter only if Butterworth Low-pass is selected
       cycle_fp_filt = None
       if filter_mode == "Butterworth Low-pass" and cutoff_fc is not None:
         cycle_fp_filt = ktk.filters.butter(cycle_fp_raw, fc=cutoff_fc)
 
-      # ---------------------------------------------------------
+        # ---------------------------------------------------------
       # Render Interactive Plot
       # ---------------------------------------------------------
       import plotly.graph_objects as go
 
+      p = "1" if plate_choice == "FP1" else "2"
       axes = [
           ("X (M-L)", f"F{p}X", "#ef4444"),
           ("Y (A-P)", f"F{p}Y", "#22c55e"),
