@@ -582,25 +582,33 @@ if (
 
   active_tabs = st.tabs(tab_labels)
 
-  # =========================================================================
+# =========================================================================
   # STEP 1: KINEMATICS & GAIT CYCLE IDENTIFICATION
   # =========================================================================
   with active_tabs[0]:
     st.subheader("Step 1: Identify and Isolate One Gait Cycle")
     st.caption(
-        "Inspect sagittal joint kinematics (e.g., Knee or Hip flexion) to"
-        " identify consecutive heel strikes (0% to 100% of a single cycle)."
+        "Inspect sagittal joint kinematics to identify consecutive heel"
+        " strikes (0% to 100% of a single cycle)."
     )
 
     angles_ts = st.session_state["angles"]
     t_min = float(angles_ts.time[0])
     t_max = float(angles_ts.time[-1])
 
-    # Let students inspect the curve
+    # Let students inspect the curve with Ankle joints included
     joint_col, _ = st.columns([1, 2])
     with joint_col:
       chosen_joint = st.selectbox(
-          "Inspection Joint:", ["KneeR", "KneeL", "HipR", "HipL"]
+          "Inspection Joint:",
+          [
+              "KneeR",
+              "KneeL",
+              "HipR",
+              "HipL",
+              "AnkleR",
+              "AnkleL",
+          ],  # Added ankle joints
       )
 
     import plotly.graph_objects as go
@@ -629,7 +637,7 @@ if (
         annotation_text="Selected Cycle",
     )
     fig_kin.update_layout(
-        title=f"{chosen_joint} Sagittal Angle",
+        title=f"{chosen_joint} Sagittal Angle (Flexion/Extension)",
         xaxis_title="Time (s)",
         yaxis_title="Angle (deg)",
         template="plotly_dark",
@@ -639,7 +647,8 @@ if (
 
     # Cycle Decision Controls
     st.markdown("#### 🎯 Student Decision: Set Cycle Bounds")
-    c_col1, c_col2, c_col3 = st.columns([2, 2, 1])
+    c_col1, c_col2, c_col3, c_col4 = st.columns([2, 2, 1.2, 1])
+
     with c_col1:
       t_start_input = st.number_input(
           "Cycle Initial Contact (s):",
@@ -647,6 +656,7 @@ if (
           max_value=t_max,
           value=t_s,
           step=0.01,
+          format="%.3f",
       )
     with c_col2:
       t_end_input = st.number_input(
@@ -655,6 +665,7 @@ if (
           max_value=t_max,
           value=t_e,
           step=0.01,
+          format="%.3f",
       )
     with c_col3:
       st.write("")
@@ -667,15 +678,24 @@ if (
           st.rerun()
         else:
           st.error("End time must be greater than start time.")
+    with c_col4:
+      st.write("")
+      st.write("")
+      # Reset button relocks downstream steps and restores initial bounds
+      if st.button("Reset Selection"):
+        st.session_state["cycle_locked"] = False
+        st.session_state["filter_locked"] = False
+        st.session_state["t_start"] = t_min
+        st.session_state["t_end"] = float(min(t_min + 1.2, t_max))
+        st.rerun()
 
     if st.session_state["cycle_locked"]:
       st.success(
-          f"Cycle locked: {st.session_state['t_start']:.2f}s to"
-          f" {st.session_state['t_end']:.2f}s (Duration:"
-          f" {st.session_state['t_end'] - st.session_state['t_start']:.2f}s)."
+          f"Cycle locked: {st.session_state['t_start']:.3f}s to"
+          f" {st.session_state['t_end']:.3f}s (Duration:"
+          f" {st.session_state['t_end'] - st.session_state['t_start']:.3f}s)."
           " Proceed to Step 2."
       )
-
   # =========================================================================
   # STEP 2: FORCE SIGNAL FILTERING DECISION
   # =========================================================================
