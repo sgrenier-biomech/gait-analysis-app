@@ -645,9 +645,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   with active_tabs[0]:
     st.subheader("Step 1: Identify and Isolate One Gait Cycle")
     st.caption(
-        "Inspect sagittal joint kinematics. Use the **Box Select** tool on the"
-        " plot toolbar to drag over a single cycle, or manually type the"
-        " bounds below."
+        "Inspect sagittal kinematics. Drag a box across one gait cycle (heel"
+        " strike to heel strike) or type timestamps below."
     )
 
     angles_ts = st.session_state["angles"]
@@ -658,10 +657,12 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     k_start = f"input_t_start_{v}"
     k_end = f"input_t_end_{v}"
 
-    # Initialize session keys with true trial bounds
     if "t_start" not in st.session_state or st.session_state["t_start"] < t_min:
       st.session_state["t_start"] = t_min
-    if "t_end" not in st.session_state or st.session_state["t_end"] <= st.session_state["t_start"]:
+    if (
+        "t_end" not in st.session_state
+        or st.session_state["t_end"] <= st.session_state["t_start"]
+    ):
       st.session_state["t_end"] = min(t_min + 1.2, t_max)
 
     if k_start not in st.session_state:
@@ -669,18 +670,21 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     if k_end not in st.session_state:
       st.session_state[k_end] = float(st.session_state["t_end"])
 
-    # Joint selection dropdown
     available_keys = list(angles_ts.data.keys())
     preferred_order = ["AnkleR", "AnkleL", "KneeR", "KneeL", "HipR", "HipL"]
     joint_options = [j for j in preferred_order if j in available_keys]
     if not joint_options:
       joint_options = available_keys
 
-    joint_col, _ = st.columns([1, 2])
-    with joint_col:
+    c_sel1, c_sel2 = st.columns([2, 1])
+    with c_sel1:
       chosen_joint = st.selectbox("Inspection Joint:", joint_options)
+    with c_sel2:
+      zoom_to_window = st.checkbox(
+          "🔍 Zoom graph to selected cycle",
+          value=st.session_state.get("cycle_locked", False),
+      )
 
-    # Build Plotly Figure
     import plotly.graph_objects as go
 
     fig_kin = go.Figure()
@@ -700,12 +704,19 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     fig_kin.add_vrect(
         x0=t_curr_s,
         x1=t_curr_e,
-        fillcolor="rgba(34, 197, 94, 0.2)",
+        fillcolor="rgba(34, 197, 94, 0.25)",
         line_width=2,
         line_dash="dash",
         line_color="#22c55e",
         annotation_text="Selected Window",
         annotation_position="top left",
+    )
+
+    # Determine x-axis zoom range
+    x_axis_range = (
+        [t_curr_s - 0.05, t_curr_e + 0.05]
+        if zoom_to_window
+        else [t_min, t_max]
     )
 
     fig_kin.update_layout(
@@ -715,10 +726,10 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         template="plotly_dark",
         dragmode="select",
         margin=dict(l=20, r=20, t=40, b=20),
-        uirevision=f"rev_{v}",
+        xaxis=dict(range=x_axis_range, autorange=False),
+        uirevision=f"rev_{v}_{zoom_to_window}",
     )
 
-    # Render interactive plot
     chart_event = st.plotly_chart(
         fig_kin,
         use_container_width=True,
@@ -727,19 +738,13 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         key=f"kinematics_chart_{v}",
     )
 
-    # -------------------------------------------------------------
-    # Capture Mouse Drag Selection and Force-Sync Input State
-    # -------------------------------------------------------------
     if chart_event and "selection" in chart_event:
       selection_dict = chart_event["selection"]
       x_vals = None
-
-      # Check box selections
       if "box" in selection_dict and len(selection_dict["box"]) > 0:
         box = selection_dict["box"][0]
         if "x" in box and len(box["x"]) >= 2:
           x_vals = box["x"]
-      # Check point range if box points were returned
       elif "points" in selection_dict and len(selection_dict["points"]) > 1:
         pts_x = [p["x"] for p in selection_dict["points"] if "x" in p]
         if pts_x:
@@ -748,15 +753,16 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       if x_vals:
         new_s = round(float(min(x_vals)), 3)
         new_e = round(float(max(x_vals)), 3)
-        # Only update and rerun if the selection differs from the current values
-        if abs(new_s - st.session_state["t_start"]) > 0.005 or abs(new_e - st.session_state["t_end"]) > 0.005:
+        if (
+            abs(new_s - st.session_state["t_start"]) > 0.005
+            or abs(new_e - st.session_state["t_end"]) > 0.005
+        ):
           st.session_state["t_start"] = new_s
           st.session_state["t_end"] = new_e
           st.session_state[k_start] = new_s
           st.session_state[k_end] = new_e
           st.rerun()
 
-    # Inputs & Decision Controls
     st.markdown("#### 🎯 Student Decision: Set Cycle Bounds")
     c_col1, c_col2, c_col3, c_col4 = st.columns([2, 2, 1.2, 1])
 
@@ -778,7 +784,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           format="%.3f",
           key=k_end,
       )
-
     with c_col3:
       st.write("")
       st.write("")
@@ -790,11 +795,10 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           st.rerun()
         else:
           st.error("End time must be greater than start time.")
-
     with c_col4:
       st.write("")
       st.write("")
-      if st.button("Reset Selection"):
+      if st.button("Reset View / Selection"):
         st.session_state["cycle_locked"] = False
         st.session_state["filter_locked"] = False
         st.session_state["t_start"] = t_min
@@ -807,91 +811,75 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           f"Cycle locked: {st.session_state['t_start']:.3f}s to"
           f" {st.session_state['t_end']:.3f}s. Proceed to Step 2 above."
       )
-# =========================================================================
-  # STEP 2: GRF DECISIONS
+      
+ # =========================================================================
+  # STEP 2: GRF DECISIONS (INDEPENDENT FP1 & FP2 ZEROING)
   # =========================================================================
   if st.session_state.get("cycle_locked", False) and len(active_tabs) > 1:
     with active_tabs[1]:
       st.subheader("Step 2: Ground Reaction Force (GRF) Processing Decisions")
       st.caption(
-          "Inspect raw forces, optionally refine your window, set baseline"
-          " zeroing, and choose filtering."
+          "Configure baseline zeroing and filtering for each force plate"
+          " independently."
       )
-
-      with st.expander(
-          "🔍 Optional: Refine Gait Cycle Window Timing", expanded=False
-      ):
-        w_col1, w_col2, w_col3 = st.columns([2, 2, 1])
-        with w_col1:
-          ref_t_start = st.number_input(
-              "Adjust Cycle Start (s):",
-              value=float(st.session_state["t_start"]),
-              step=0.005,
-              format="%.3f",
-          )
-        with w_col2:
-          ref_t_end = st.number_input(
-              "Adjust Cycle End (s):",
-              value=float(st.session_state["t_end"]),
-              step=0.005,
-              format="%.3f",
-          )
-        with w_col3:
-          st.write("")
-          st.write("")
-          if st.button("Update Window"):
-            if ref_t_end > ref_t_start:
-              st.session_state["t_start"] = ref_t_start
-              st.session_state["t_end"] = ref_t_end
-              st.success("Window bounds updated.")
-              st.rerun()
-            else:
-              st.error("End time must be greater than start time.")
-
-      st.markdown("#### 1. Force Plate & Baseline Zeroing Decisions")
-      c_col1, c_col2, c_col3 = st.columns(3)
-      with c_col1:
-        plate_choice = st.radio(
-            "Select Force Plate:",
-            ["FP1", "FP2"],
-            horizontal=True,
-            key="grf_plate_sel",
-        )
-
-      raw_plate_ts = (
-          st.session_state["FP1_raw"]
-          if plate_choice == "FP1"
-          else st.session_state["FP2_raw"]
-      )
-
-      with c_col2:
-        debias_choice = st.checkbox(
-            "Apply Baseline Zeroing (De-bias)",
-            value=st.session_state.get("apply_debias", False),
-            key="apply_debias_cb",
-        )
 
       angles_ts = st.session_state["angles"]
       k_t_start = float(angles_ts.time[0])
       k_t_end = float(angles_ts.time[-1])
       kin_duration = k_t_end - k_t_start
 
-      with c_col3:
-        if debias_choice:
-          default_interval = (
-              (k_t_start + 0.2, k_t_start + 0.6)
-              if plate_choice == "FP1"
-              else (k_t_start + 1.0, k_t_start + 1.4)
-          )
+      # Initialize independent baseline defaults if not already present
+      for p_name, def_start, def_end in [
+          ("FP1", k_t_start + 0.2, k_t_start + 0.6),
+          ("FP2", k_t_start + 1.0, k_t_start + 1.4),
+      ]:
+        if f"{p_name}_debias" not in st.session_state:
+          st.session_state[f"{p_name}_debias"] = False
+        if f"{p_name}_b_start" not in st.session_state:
+          st.session_state[f"{p_name}_b_start"] = round(float(def_start), 3)
+        if f"{p_name}_b_end" not in st.session_state:
+          st.session_state[f"{p_name}_b_end"] = round(float(def_end), 3)
 
-          b_start, b_end = st.slider(
-              "Quiescent Baseline Interval (s):",
-              min_value=k_t_start,
-              max_value=k_t_end,
-              value=default_interval,
-              step=0.01,
-              format="%.2f",
-          )
+      plate_choice = st.radio(
+          "Active Force Plate to Inspect & Configure:",
+          ["FP1", "FP2"],
+          horizontal=True,
+          key="grf_plate_sel",
+      )
+
+      st.markdown(f"#### 1. Baseline Zeroing for **{plate_choice}**")
+      c_col1, c_col2, c_col3 = st.columns([1.5, 2, 2])
+
+      with c_col1:
+        st.session_state[f"{plate_choice}_debias"] = st.checkbox(
+            f"Zero Baseline for {plate_choice}",
+            value=st.session_state[f"{plate_choice}_debias"],
+            key=f"cb_debias_{plate_choice}",
+        )
+
+      with c_col2:
+        st.session_state[f"{plate_choice}_b_start"] = st.number_input(
+            f"{plate_choice} Quiescent Start (s):",
+            min_value=k_t_start,
+            max_value=k_t_end,
+            value=float(st.session_state[f"{plate_choice}_b_start"]),
+            step=0.01,
+            format="%.3f",
+            disabled=not st.session_state[f"{plate_choice}_debias"],
+            key=f"num_b_start_{plate_choice}",
+        )
+
+      with c_col3:
+        st.session_state[f"{plate_choice}_b_end"] = st.number_input(
+            f"{plate_choice} Quiescent End (s):",
+            min_value=k_t_start,
+            max_value=k_t_end,
+            value=float(st.session_state[f"{plate_choice}_b_end"]),
+            step=0.01,
+            format="%.3f",
+            disabled=not st.session_state[f"{plate_choice}_debias"],
+            key=f"num_b_end_{plate_choice}",
+        )
 
       st.markdown("#### 2. Filtering Decisions")
       f_col1, f_col2 = st.columns(2)
@@ -915,55 +903,61 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           cutoff_fc = None
           st.caption("Displaying unfiltered raw signals.")
 
-      # Deep copy so raw session data remains untouched
+      # Process data for the active plate
       import copy
-      fp_working = copy.deepcopy(raw_plate_ts)
 
-      # -----------------------------------------------------------------
-      # 1. Quiescent Baseline Debiasing via Index Percentage
-      # -----------------------------------------------------------------
+      raw_plate_ts = (
+          st.session_state["FP1_raw"]
+          if plate_choice == "FP1"
+          else st.session_state["FP2_raw"]
+      )
+      fp_working = copy.deepcopy(raw_plate_ts)
       n_total_fp = len(fp_working.time)
-      if debias_choice:
-        b_pct_start = max(0.0, min(1.0, (b_start - k_t_start) / kin_duration))
-        b_pct_end = max(0.0, min(1.0, (b_end - k_t_start) / kin_duration))
+
+      # Independent Zeroing Calculation
+      if st.session_state[f"{plate_choice}_debias"]:
+        b_s = st.session_state[f"{plate_choice}_b_start"]
+        b_e = st.session_state[f"{plate_choice}_b_end"]
+
+        b_pct_start = max(0.0, min(1.0, (b_s - k_t_start) / kin_duration))
+        b_pct_end = max(0.0, min(1.0, (b_e - k_t_start) / kin_duration))
         b_idx_start = int(b_pct_start * n_total_fp)
         b_idx_end = max(b_idx_start + 1, int(b_pct_end * n_total_fp))
 
         for k in fp_working.data.keys():
-          baseline_offset = np.nanmean(fp_working.data[k][b_idx_start:b_idx_end])
+          baseline_offset = np.nanmean(
+              fp_working.data[k][b_idx_start:b_idx_end]
+          )
           fp_working.data[k] -= baseline_offset
 
-      # -----------------------------------------------------------------
-      # 2. Slice Cycle by Index Mapped from Kinematic Time Bounds
-      # -----------------------------------------------------------------
+      # Slice strictly to the locked gait cycle window
       user_t_start = float(st.session_state["t_start"])
       user_t_end = float(st.session_state["t_end"])
 
-      c_pct_start = max(0.0, min(1.0, (user_t_start - k_t_start) / kin_duration))
+      c_pct_start = max(
+          0.0, min(1.0, (user_t_start - k_t_start) / kin_duration)
+      )
       c_pct_end = max(0.0, min(1.0, (user_t_end - k_t_start) / kin_duration))
-
       c_idx_start = int(c_pct_start * n_total_fp)
       c_idx_end = max(c_idx_start + 2, int(c_pct_end * n_total_fp))
 
-      # Construct cycle TimeSeries directly on the kinematic timeline
       cycle_fp_raw = ktk.TimeSeries()
       n_cycle_samples = c_idx_end - c_idx_start
-      cycle_fp_raw.time = np.linspace(user_t_start, user_t_end, n_cycle_samples)
+      cycle_fp_raw.time = np.linspace(
+          user_t_start, user_t_end, n_cycle_samples
+      )
 
       for k in fp_working.data.keys():
-        cycle_fp_raw.data[k] = np.copy(fp_working.data[k][c_idx_start:c_idx_end])
+        cycle_fp_raw.data[k] = np.copy(
+            fp_working.data[k][c_idx_start:c_idx_end]
+        )
 
-      # -----------------------------------------------------------------
-      # 3. Optional Butterworth Filter
-      # -----------------------------------------------------------------
+      # Optional filtering
       cycle_fp_filt = None
       if filter_mode == "Butterworth Low-pass" and cutoff_fc is not None:
         cycle_fp_filt = ktk.filters.butter(cycle_fp_raw, fc=cutoff_fc)
         cycle_fp_filt.time = np.copy(cycle_fp_raw.time)
 
-      # -----------------------------------------------------------------
-      # 4. Interactive Plot
-      # -----------------------------------------------------------------
       p = "1" if plate_choice == "FP1" else "2"
       axes = [
           ("X (M-L)", f"F{p}X", "#ef4444"),
@@ -972,7 +966,9 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       ]
 
       import plotly.graph_objects as go
+
       fig_grf = go.Figure()
+      is_debiased = st.session_state[f"{plate_choice}_debias"]
 
       for label, ch, color in axes:
         if ch in cycle_fp_raw.data:
@@ -983,7 +979,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
                     y=cycle_fp_raw.data[ch],
                     mode="lines",
                     line=dict(color=color, width=2.5),
-                    name=f"{label} {'(Zeroed)' if debias_choice else '(Raw)'}",
+                    name=f"{label} {'(Zeroed)' if is_debiased else '(Raw)'}",
                 )
             )
           else:
@@ -1021,13 +1017,9 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       )
       st.plotly_chart(fig_grf, use_container_width=True)
 
-      # ---------------------------------------------------------
-      # 5. Confirm Decisions
-      # ---------------------------------------------------------
       st.markdown("#### 🎯 Confirm Decisions")
       if st.button("Accept Force Processing Decisions", type="primary"):
         st.session_state["chosen_plate"] = plate_choice
-        st.session_state["apply_debias"] = debias_choice
         st.session_state["chosen_filter"] = filter_mode
         st.session_state["chosen_fc"] = cutoff_fc if cutoff_fc else 100
         st.session_state["cycle_fp_processed"] = (
