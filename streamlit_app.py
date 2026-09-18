@@ -657,61 +657,67 @@ if (
     st.plotly_chart(fig_kin, use_container_width=True)
 
 # 1. Define callback function that runs BEFORE widgets re-render
-    def reset_step1_callback():
-        st.session_state["cycle_locked"] = False
-        st.session_state["filter_locked"] = False
+    if "step1_version" not in st.session_state:
+        st.session_state["step1_version"] = 0
         
-        default_start = t_min
-        default_end = float(min(t_min + 1.2, t_max))
-        
-        st.session_state["t_start"] = default_start
-        st.session_state["t_end"] = default_end
-        st.session_state["input_t_start"] = default_start
-        st.session_state["input_t_end"] = default_end
+# Set default values for initial render
+    default_start = t_min
+    default_end = float(min(t_min + 1.2, t_max))
 
-    # Ensure keys exist before widget creation
-    if "input_t_start" not in st.session_state:
-        st.session_state["input_t_start"] = st.session_state["t_start"]
-    if "input_t_end" not in st.session_state:
-        st.session_state["input_t_end"] = st.session_state["t_end"]
+    # Active key suffix tied to reset counter
+    v = st.session_state.get("step1_version", 0)
+    k_start = f"input_t_start_{v}"
+    k_end = f"input_t_end_{v}"
 
     st.markdown("#### 🎯 Student Decision: Set Cycle Bounds")
     c_col1, c_col2, c_col3, c_col4 = st.columns([2, 2, 1.2, 1])
 
     with c_col1:
-        st.number_input(
-            "Cycle Initial Contact (s):",
-            min_value=t_min,
-            max_value=t_max,
-            step=0.01,
-            format="%.3f",
-            key="input_t_start"
-        )
+      val_s = st.number_input(
+          "Cycle Initial Contact (s):",
+          min_value=t_min,
+          max_value=t_max,
+          value=float(st.session_state["t_start"]),
+          step=0.01,
+          format="%.3f",
+          key=k_start,
+      )
     with c_col2:
-        st.number_input(
-            "Next Initial Contact (s):",
-            min_value=t_min,
-            max_value=t_max,
-            step=0.01,
-            format="%.3f",
-            key="input_t_end"
-        )
+      val_e = st.number_input(
+          "Next Initial Contact (s):",
+          min_value=t_min,
+          max_value=t_max,
+          value=float(st.session_state["t_end"]),
+          step=0.01,
+          format="%.3f",
+          key=k_end,
+      )
     with c_col3:
-        st.write("")
-        st.write("")
-        if st.button("Lock In Gait Cycle", type="primary"):
-            if st.session_state["input_t_end"] > st.session_state["input_t_start"]:
-                st.session_state["t_start"] = st.session_state["input_t_start"]
-                st.session_state["t_end"] = st.session_state["input_t_end"]
-                st.session_state["cycle_locked"] = True
-                st.rerun()
-            else:
-                st.error("End time must be greater than start time.")
+      st.write("")
+      st.write("")
+      if st.button("Lock In Gait Cycle", type="primary"):
+        if val_e > val_s:
+          st.session_state["t_start"] = val_s
+          st.session_state["t_end"] = val_e
+          st.session_state["cycle_locked"] = True
+          st.rerun()
+        else:
+          st.error("End time must be greater than start time.")
     with c_col4:
-        st.write("")
-        st.write("")
-        # Pass the callback directly to the button
-        st.button("Reset Selection", on_click=reset_step1_callback)
+      st.write("")
+      st.write("")
+      if st.button("Reset Selection"):
+        # Reset locks
+        st.session_state["cycle_locked"] = False
+        st.session_state["filter_locked"] = False
+
+        # Reset times to defaults
+        st.session_state["t_start"] = default_start
+        st.session_state["t_end"] = default_end
+
+        # Bump version counter to force Streamlit to wipe the widget cache
+        st.session_state["step1_version"] = v + 1
+        st.rerun()
 
     if st.session_state["cycle_locked"]:
       st.success(
