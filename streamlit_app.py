@@ -759,7 +759,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           f" {st.session_state['t_end']:.3f}s. Proceed to Step 2 above."
       )
 
-  # =========================================================================
+# =========================================================================
   # STEP 2: GRF DECISIONS
   # =========================================================================
   if st.session_state.get("cycle_locked", False) and len(active_tabs) > 1:
@@ -810,7 +810,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             key="grf_plate_sel",
         )
 
-      # 1. Define raw_plate_ts FIRST so its time bounds exist for the slider
       raw_plate_ts = (
           st.session_state["FP1_raw"]
           if plate_choice == "FP1"
@@ -826,7 +825,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
       with c_col3:
         if debias_choice:
-          # 2. Extract start and end times with proper underscores
           trial_t_start = float(raw_plate_ts.time[0])
           trial_t_end = float(raw_plate_ts.time[-1])
 
@@ -867,11 +865,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           cutoff_fc = None
           st.caption("Displaying unfiltered raw signals.")
 
-      raw_plate_ts = (
-          st.session_state["FP1_raw"]
-          if plate_choice == "FP1"
-          else st.session_state["FP2_raw"]
-      )
+      # Deep copy so raw data is never mutated
       fp_working = copy.deepcopy(raw_plate_ts)
 
       if debias_choice:
@@ -881,13 +875,23 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         for k in fp_working.data.keys():
           fp_working.data[k] -= np.nanmean(bias_ts.data[k])
 
+      # Slice to the gait cycle window
       cycle_fp_raw = fp_working.get_ts_between_times(
           st.session_state["t_start"], st.session_state["t_end"], inclusive=True
       )
 
+      # Ensure time array starts at t_start if it was reset to 0
+      if (
+          len(cycle_fp_raw.time) > 0
+          and abs(cycle_fp_raw.time[0] - st.session_state["t_start"]) > 0.5
+      ):
+        cycle_fp_raw.time = cycle_fp_raw.time + st.session_state["t_start"]
+
+      # Optional filtering
       cycle_fp_filt = None
       if filter_mode == "Butterworth Low-pass" and cutoff_fc is not None:
         cycle_fp_filt = ktk.filters.butter(cycle_fp_raw, fc=cutoff_fc)
+        cycle_fp_filt.time = cycle_fp_raw.time
 
       p = "1" if plate_choice == "FP1" else "2"
       axes = [
@@ -929,6 +933,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
               )
           )
 
+      # Properly placed OUTSIDE the for loop and else block
       fig_grf.update_layout(
           title=f"{plate_choice} Force Traces",
           xaxis_title="Time (s)",
@@ -936,6 +941,10 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           template="plotly_dark",
           hovermode="x unified",
           margin=dict(l=20, r=20, t=40, b=20),
+          xaxis=dict(
+              range=[st.session_state["t_start"], st.session_state["t_end"]],
+              autorange=False,
+          ),
       )
       st.plotly_chart(fig_grf, use_container_width=True)
 
@@ -951,7 +960,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         st.session_state["filter_locked"] = True
         st.success("Decisions saved! Step 3 (COP Analysis) is now unlocked.")
         st.rerun()
-
+        
   # =========================================================================
   # STEP 3: COP & BUTTERFLY PLOT
   # =========================================================================
