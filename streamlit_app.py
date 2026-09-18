@@ -517,9 +517,11 @@ def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: 
     fp1.resample(120, kind="linear", in_place=True)
     fp2.resample(120, kind="linear", in_place=True)
     
-# Shift time vectors so GRF and Kinematics share the identical global clock
+# -----------------------------------------------------------------
+    # Shift time vectors so ALL analog/force objects match marker time
+    # -----------------------------------------------------------------
     t0_target = float(markers.time[0])
-    for ts_obj in [raw_analogs, FP1, fp1, FP2, fp2]:
+    for ts_obj in [raw_analogs, fplate, FP1, fp1, FP2, fp2]:  # <-- Added fplate
       if ts_obj is not None:
         shift = t0_target - float(ts_obj.time[0])
         if abs(shift) > 1e-4:
@@ -538,8 +540,8 @@ def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: 
         FP2_filtered=fp2,
     )
 
-    # Re-verify alignment right before returning in case compute_inverse_dynamics mutated time
-    for ts_obj in [raw_analogs, FP1, fp1, FP2, fp2]:
+    # Re-verify alignment right before returning
+    for ts_obj in [raw_analogs, fplate, FP1, fp1, FP2, fp2]:  # <-- Added fplate
       if ts_obj is not None:
         shift = t0_target - float(ts_obj.time[0])
         if abs(shift) > 1e-4:
