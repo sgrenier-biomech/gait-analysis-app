@@ -619,12 +619,12 @@ if (
       chosen_joint = st.selectbox(
           "Inspection Joint:",
           [
+              "AnkleR",
+              "AnkleL",
               "KneeR",
               "KneeL",
               "HipR",
               "HipL",
-              "AnkleR",
-              "AnkleL",
           ],
       )
 
