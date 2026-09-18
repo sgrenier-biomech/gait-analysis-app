@@ -825,24 +825,25 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
       with c_col3:
         if debias_choice:
-          trial_t_start = float(raw_plate_ts.time[0])
-          trial_t_end = float(raw_plate_ts.time[-1])
+          # Use marker kinematics start/end so the slider aligns with Step 1
+          k_t_start = float(st.session_state["angles"].time[0])
+          k_t_end = float(st.session_state["angles"].time[-1])
 
           default_interval = (
-              (trial_t_start + 0.2, trial_t_start + 0.6)
+              (k_t_start + 0.2, k_t_start + 0.6)
               if plate_choice == "FP1"
-              else (trial_t_start + 1.0, trial_t_start + 1.4)
+              else (k_t_start + 1.0, k_t_start + 1.4)
           )
 
           b_start, b_end = st.slider(
               "Quiescent Baseline Interval (s):",
-              min_value=trial_t_start,
-              max_value=trial_t_end,
+              min_value=k_t_start,
+              max_value=k_t_end,
               value=default_interval,
               step=0.01,
               format="%.2f",
           )
-
+          
       st.markdown("#### 2. Filtering Decisions")
       f_col1, f_col2 = st.columns(2)
       with f_col1:
@@ -875,18 +876,21 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         for k in fp_working.data.keys():
           fp_working.data[k] -= np.nanmean(bias_ts.data[k])
 
-      # Slice to the gait cycle window
+    # Slice to the gait cycle window
       cycle_fp_raw = fp_working.get_ts_between_times(
           st.session_state["t_start"], st.session_state["t_end"], inclusive=True
       )
 
-      # Ensure time array starts at t_start if it was reset to 0
-      if (
-          len(cycle_fp_raw.time) > 0
-          and abs(cycle_fp_raw.time[0] - st.session_state["t_start"]) > 0.5
-      ):
-        cycle_fp_raw.time = cycle_fp_raw.time + st.session_state["t_start"]
-
+      # -------------------------------------------------------------
+      # ENFORCE EXACT KINEMATIC TIMELINE:
+      # If fp_working was sliced with a zero offset, anchor it to t_start
+      # -------------------------------------------------------------
+      if len(cycle_fp_raw.time) > 1:
+        dt = float(np.mean(np.diff(cycle_fp_raw.time)))
+        n_samples = len(cycle_fp_raw.time)
+        # Build exact matching timeline starting at t_start
+        cycle_fp_raw.time = st.session_state["t_start"] + np.arange(n_samples) * dt
+        
       # Optional filtering
       cycle_fp_filt = None
       if filter_mode == "Butterworth Low-pass" and cutoff_fc is not None:
