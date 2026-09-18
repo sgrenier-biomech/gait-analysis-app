@@ -613,19 +613,20 @@ if (
 
     v = st.session_state["step1_version"]
 
-    # Let students inspect the curve with Ankle joints included
+# Filter dropdown to keys that actually exist in the processed dataset
+    available_keys = list(angles_ts.data.keys())
+    preferred_order = ["AnkleR", "AnkleL", "KneeR", "KneeL", "HipR", "HipL"]
+    joint_options = [j for j in preferred_order if j in available_keys]
+    
+    # Fallback to all keys if preferred names aren't found
+    if not joint_options:
+        joint_options = available_keys
+
     joint_col, _ = st.columns([1, 2])
     with joint_col:
       chosen_joint = st.selectbox(
           "Inspection Joint:",
-          [
-              "AnkleR",
-              "AnkleL",
-              "KneeR",
-              "KneeL",
-              "HipR",
-              "HipL",
-          ],
+          joint_options,
       )
 
     import plotly.graph_objects as go
