@@ -557,7 +557,7 @@ if "angles" in st.session_state and "results" in st.session_state and "markers" 
         "Joint Angles", 
         "Forces & Moments", 
         "GRF", 
-        "Center of Pressure (COP)"
+        "Center of Pressure (COP)",
         "3D Interactive Animation"])
 
     with tab1:
