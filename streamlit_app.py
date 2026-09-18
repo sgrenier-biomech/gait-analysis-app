@@ -823,12 +823,13 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             key="apply_debias_cb",
         )
 
+      angles_ts = st.session_state["angles"]
+      k_t_start = float(angles_ts.time[0])
+      k_t_end = float(angles_ts.time[-1])
+      kin_duration = k_t_end - k_t_start
+
       with c_col3:
         if debias_choice:
-          # Use marker kinematics start/end so the slider aligns with Step 1
-          k_t_start = float(st.session_state["angles"].time[0])
-          k_t_end = float(st.session_state["angles"].time[-1])
-
           default_interval = (
               (k_t_start + 0.2, k_t_start + 0.6)
               if plate_choice == "FP1"
@@ -843,7 +844,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
               step=0.01,
               format="%.2f",
           )
-          
+
       st.markdown("#### 2. Filtering Decisions")
       f_col1, f_col2 = st.columns(2)
       with f_col1:
@@ -866,37 +867,55 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           cutoff_fc = None
           st.caption("Displaying unfiltered raw signals.")
 
-      # Deep copy so raw data is never mutated
+      # Deep copy so raw session data remains untouched
+      import copy
       fp_working = copy.deepcopy(raw_plate_ts)
 
+      # -----------------------------------------------------------------
+      # 1. Quiescent Baseline Debiasing via Index Percentage
+      # -----------------------------------------------------------------
+      n_total_fp = len(fp_working.time)
       if debias_choice:
-        bias_ts = fp_working.get_ts_between_times(
-            b_start, b_end, inclusive=False
-        )
+        b_pct_start = max(0.0, min(1.0, (b_start - k_t_start) / kin_duration))
+        b_pct_end = max(0.0, min(1.0, (b_end - k_t_start) / kin_duration))
+        b_idx_start = int(b_pct_start * n_total_fp)
+        b_idx_end = max(b_idx_start + 1, int(b_pct_end * n_total_fp))
+
         for k in fp_working.data.keys():
-          fp_working.data[k] -= np.nanmean(bias_ts.data[k])
+          baseline_offset = np.nanmean(fp_working.data[k][b_idx_start:b_idx_end])
+          fp_working.data[k] -= baseline_offset
 
-    # Slice to the gait cycle window
-      cycle_fp_raw = fp_working.get_ts_between_times(
-          st.session_state["t_start"], st.session_state["t_end"], inclusive=True
-      )
+      # -----------------------------------------------------------------
+      # 2. Slice Cycle by Index Mapped from Kinematic Time Bounds
+      # -----------------------------------------------------------------
+      user_t_start = float(st.session_state["t_start"])
+      user_t_end = float(st.session_state["t_end"])
 
-      # -------------------------------------------------------------
-      # ENFORCE EXACT KINEMATIC TIMELINE:
-      # If fp_working was sliced with a zero offset, anchor it to t_start
-      # -------------------------------------------------------------
-      if len(cycle_fp_raw.time) > 1:
-        dt = float(np.mean(np.diff(cycle_fp_raw.time)))
-        n_samples = len(cycle_fp_raw.time)
-        # Build exact matching timeline starting at t_start
-        cycle_fp_raw.time = st.session_state["t_start"] + np.arange(n_samples) * dt
-        
-      # Optional filtering
+      c_pct_start = max(0.0, min(1.0, (user_t_start - k_t_start) / kin_duration))
+      c_pct_end = max(0.0, min(1.0, (user_t_end - k_t_start) / kin_duration))
+
+      c_idx_start = int(c_pct_start * n_total_fp)
+      c_idx_end = max(c_idx_start + 2, int(c_pct_end * n_total_fp))
+
+      # Construct cycle TimeSeries directly on the kinematic timeline
+      cycle_fp_raw = ktk.TimeSeries()
+      n_cycle_samples = c_idx_end - c_idx_start
+      cycle_fp_raw.time = np.linspace(user_t_start, user_t_end, n_cycle_samples)
+
+      for k in fp_working.data.keys():
+        cycle_fp_raw.data[k] = np.copy(fp_working.data[k][c_idx_start:c_idx_end])
+
+      # -----------------------------------------------------------------
+      # 3. Optional Butterworth Filter
+      # -----------------------------------------------------------------
       cycle_fp_filt = None
       if filter_mode == "Butterworth Low-pass" and cutoff_fc is not None:
         cycle_fp_filt = ktk.filters.butter(cycle_fp_raw, fc=cutoff_fc)
-        cycle_fp_filt.time = cycle_fp_raw.time
+        cycle_fp_filt.time = np.copy(cycle_fp_raw.time)
 
+      # -----------------------------------------------------------------
+      # 4. Interactive Plot
+      # -----------------------------------------------------------------
       p = "1" if plate_choice == "FP1" else "2"
       axes = [
           ("X (M-L)", f"F{p}X", "#ef4444"),
@@ -904,40 +923,42 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           ("Z (Vertical)", f"F{p}Z", "#3b82f6"),
       ]
 
+      import plotly.graph_objects as go
       fig_grf = go.Figure()
-      for label, ch, color in axes:
-        if cycle_fp_filt is None:
-          fig_grf.add_trace(
-              go.Scatter(
-                  x=cycle_fp_raw.time,
-                  y=cycle_fp_raw.data[ch],
-                  mode="lines",
-                  line=dict(color=color, width=2.5),
-                  name=f"{label} {'(Zeroed)' if debias_choice else '(Raw)'}",
-              )
-          )
-        else:
-          fig_grf.add_trace(
-              go.Scatter(
-                  x=cycle_fp_raw.time,
-                  y=cycle_fp_raw.data[ch],
-                  mode="lines",
-                  line=dict(color=color, dash="dot", width=1.5),
-                  opacity=0.45,
-                  name=f"{label} Raw",
-              )
-          )
-          fig_grf.add_trace(
-              go.Scatter(
-                  x=cycle_fp_filt.time,
-                  y=cycle_fp_filt.data[ch],
-                  mode="lines",
-                  line=dict(color=color, width=2.5),
-                  name=f"{label} Filtered ({cutoff_fc} Hz)",
-              )
-          )
 
-      # Properly placed OUTSIDE the for loop and else block
+      for label, ch, color in axes:
+        if ch in cycle_fp_raw.data:
+          if cycle_fp_filt is None:
+            fig_grf.add_trace(
+                go.Scatter(
+                    x=cycle_fp_raw.time,
+                    y=cycle_fp_raw.data[ch],
+                    mode="lines",
+                    line=dict(color=color, width=2.5),
+                    name=f"{label} {'(Zeroed)' if debias_choice else '(Raw)'}",
+                )
+            )
+          else:
+            fig_grf.add_trace(
+                go.Scatter(
+                    x=cycle_fp_raw.time,
+                    y=cycle_fp_raw.data[ch],
+                    mode="lines",
+                    line=dict(color=color, dash="dot", width=1.5),
+                    opacity=0.45,
+                    name=f"{label} Raw",
+                )
+            )
+            fig_grf.add_trace(
+                go.Scatter(
+                    x=cycle_fp_filt.time,
+                    y=cycle_fp_filt.data[ch],
+                    mode="lines",
+                    line=dict(color=color, width=2.5),
+                    name=f"{label} Filtered ({cutoff_fc} Hz)",
+                )
+            )
+
       fig_grf.update_layout(
           title=f"{plate_choice} Force Traces",
           xaxis_title="Time (s)",
@@ -946,12 +967,15 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           hovermode="x unified",
           margin=dict(l=20, r=20, t=40, b=20),
           xaxis=dict(
-              range=[st.session_state["t_start"], st.session_state["t_end"]],
+              range=[user_t_start, user_t_end],
               autorange=False,
           ),
       )
       st.plotly_chart(fig_grf, use_container_width=True)
 
+      # ---------------------------------------------------------
+      # 5. Confirm Decisions
+      # ---------------------------------------------------------
       st.markdown("#### 🎯 Confirm Decisions")
       if st.button("Accept Force Processing Decisions", type="primary"):
         st.session_state["chosen_plate"] = plate_choice
