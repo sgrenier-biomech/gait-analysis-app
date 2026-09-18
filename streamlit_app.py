@@ -421,6 +421,9 @@ def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: 
     markers = ktk.read_c3d(c3d_file_path)["Points"]
     markers = ktk.filters.butter(markers, fc=6)
 
+
+    raw_analogs = ktk.read_c3d(c3d_file_path)["Analogs"]  # Completely raw, un-debiased
+    
     fplate = ktk.read_c3d(c3d_file_path)["ForcePlatforms"]
     fplate.resample(120, kind="linear", in_place=True)
     fplate = ktk.filters.median(fplate, window_length=5)
@@ -512,7 +515,7 @@ def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: 
         omega, alpha, com_accelerations, joint_positions, com_positions, fplate,
         mass_total, height_total, FP1_filtered=fp1, FP2_filtered=fp2
     )
-    return markers, angles, results, FP1, FP2
+    return markers, angles, results, FP1, FP2, raw_analogs
 
 
 # =======================================================
@@ -541,13 +544,21 @@ if st.button("Process Data", type="primary"):
     else:
         with st.spinner("Processing file..."):
             try:
-                markers, angles, results, FP1, FP2 = run_segment_kinematics(selected_file_path, mass, height)
+                markers, angles, results, FP1, FP2, raw_analogs = run_segment_kinematics(selected_file_path, mass, height)
                 st.session_state["markers"] = markers
                 st.session_state["angles"] = angles
                 st.session_state["results"] = results
                 st.session_state["FP1_debiased"] = FP1
                 st.session_state["FP2_debiased"] = FP2
-                st.success("Analysis completed!")
+                st.session_state["raw_analogs"] = raw_analogs
+
+                # Default states for student decisions
+                st.session_state["cycle_locked"] = False
+                st.session_state["filter_locked"] = False
+                st.session_state["t_start"] = float(angles.time[0])
+                st.session_state["t_end"] = float(min(angles.time[0] + 1.2, angles.time[-1]))
+                st.session_state["chosen_fc"] = 100  # Default initial high cutoff
+                st.session_state["apply_debias"] = True
             except Exception as e:
                 st.error(f"Error: {e}")
 
@@ -699,92 +710,196 @@ if (
   # =========================================================================
   # STEP 2: FORCE SIGNAL FILTERING DECISION
   # =========================================================================
-  if st.session_state["cycle_locked"]:
+if st.session_state["cycle_locked"]:
     with active_tabs[1]:
-      st.subheader("Step 2: Ground Reaction Force (GRF) Filter Decision")
+      st.subheader("Step 2: Ground Reaction Force (GRF) Processing Decisions")
       st.caption(
-          "Inspect the raw force channels within the selected gait cycle and"
-          " determine an appropriate filter cutoff to eliminate high-frequency"
-          " noise without attenuating the impact transient."
+          "Inspect raw forces, optionally refine your gait cycle window,"
+          " perform baseline zeroing (de-biasing), and evaluate filter cutoffs."
       )
 
-      ctrl1, ctrl2, ctrl3 = st.columns(3)
-      with ctrl1:
+      # ---------------------------------------------------------
+      # Optional Window Refinement
+      # ---------------------------------------------------------
+      with st.expander(
+          "🔍 Optional: Refine Gait Cycle Window Timing", expanded=False
+      ):
+        w_col1, w_col2, w_col3 = st.columns([2, 2, 1])
+        with w_col1:
+          ref_t_start = st.number_input(
+              "Adjust Cycle Start (s):",
+              value=st.session_state["t_start"],
+              step=0.005,
+              format="%.3f",
+          )
+        with w_col2:
+          ref_t_end = st.number_input(
+              "Adjust Cycle End (s):",
+              value=st.session_state["t_end"],
+              step=0.005,
+              format="%.3f",
+          )
+        with w_col3:
+          st.write("")
+          st.write("")
+          if st.button("Update Window"):
+            if ref_t_end > ref_t_start:
+              st.session_state["t_start"] = ref_t_start
+              st.session_state["t_end"] = ref_t_end
+              st.success("Window bounds updated.")
+              st.rerun()
+            else:
+              st.error("End time must be greater than start time.")
+
+      # ---------------------------------------------------------
+      # Signal Decision Controls
+      # ---------------------------------------------------------
+      st.markdown("#### 1. Force Plate & Baseline Zeroing Decisions")
+      c_col1, c_col2, c_col3 = st.columns(3)
+
+      with c_col1:
         plate_choice = st.radio(
-            "Force Plate:",
+            "Select Force Plate:",
             ["FP1", "FP2"],
             horizontal=True,
-            index=0 if st.session_state["chosen_plate"] == "FP1" else 1,
-        )
-      with ctrl2:
-        filter_type = st.selectbox(
-            "Filter Type:",
-            ["None (Raw)", "Butterworth Low-pass", "Moving Median"],
-            index=1,
-        )
-      with ctrl3:
-        cutoff = (
-            st.slider(
-                "Cutoff Frequency (Hz):",
-                min_value=4,
-                max_value=100,
-                value=st.session_state["chosen_fc"],
-                step=1,
-            )
-            if filter_type == "Butterworth Low-pass"
-            else 20
+            key="grf_plate_sel",
         )
 
-      # Trim raw force plate TimeSeries strictly to the chosen cycle
-      raw_full = (
-          st.session_state["FP1_debiased"]
+      with c_col2:
+        debias_choice = st.checkbox(
+            "Apply Baseline Zeroing (De-bias)",
+            value=st.session_state.get("apply_debias", False),
+            help=(
+                "Subtracts baseline offset measured during quiescent phase"
+                " before footstrike."
+            ),
+        )
+
+      with c_col3:
+        if debias_choice:
+          # Define quiescent baseline intervals
+          default_interval = (
+              (6.6, 6.9) if plate_choice == "FP1" else (14.0, 14.25)
+          )
+          b_start, b_end = st.slider(
+              "Baseline Sampling Interval (s):",
+              min_value=0.0,
+              max_value=float(st.session_state["raw_analogs"].time[-1]),
+              value=default_interval,
+              step=0.05,
+          )
+
+      st.markdown("#### 2. Filtering Decisions")
+      f_col1, f_col2 = st.columns(2)
+      with f_col1:
+        filter_mode = st.selectbox(
+            "Filter Algorithm:",
+            ["Butterworth Low-pass", "None (Raw)"],
+            index=0,
+        )
+
+      with f_col2:
+        if filter_mode == "Butterworth Low-pass":
+          cutoff_fc = st.slider(
+              "Cutoff Frequency Fc (Hz):",
+              min_value=5,
+              max_value=200,
+              value=st.session_state.get("chosen_fc", 100),  # Defaults to 100 Hz
+              step=5,
+              help=(
+                  "Starts at 100 Hz (minimal attenuation). Lower this value to"
+                  " eliminate high-frequency vibration/impact artifacts."
+              ),
+          )
+        else:
+          cutoff_fc = None
+
+      # ---------------------------------------------------------
+      # Process the Signals Based on Student Decisions
+      # ---------------------------------------------------------
+      raw_analogs = st.session_state["raw_analogs"]
+      channels = (
+          ["F1X", "F1Y", "F1Z", "M1X", "M1Y", "M1Z"]
           if plate_choice == "FP1"
-          else st.session_state["FP2_debiased"]
+          else ["F2X", "F2Y", "F2Z", "M2X", "M2Y", "M2Z"]
       )
-      raw_cycle = raw_full.get_ts_between_times(
+      fp_working = raw_analogs.get_subset(channels)
+
+      # Scale forces to Newtons (x -1000)
+      for k in [f"{plate_choice[0:2]}X", f"{plate_choice[0:2]}Y", f"{plate_choice[0:2]}Z"]:
+        if k in fp_working.data:
+          fp_working.data[k] = fp_working.data[k] * -1000.0
+
+      # Optional student debiasing
+      if debias_choice:
+        bias_ts = fp_working.get_ts_between_times(
+            b_start, b_end, inclusive=False
+        )
+        for k in fp_working.data.keys():
+          fp_working.data[k] -= np.mean(bias_ts.data[k])
+
+      # Trim down to the student's chosen gait cycle window
+      cycle_fp_raw = fp_working.get_ts_between_times(
           st.session_state["t_start"], st.session_state["t_end"], inclusive=True
       )
 
-      filt_cycle = None
-      if filter_type == "Butterworth Low-pass":
-        filt_cycle = ktk.filters.butter(raw_cycle, fc=cutoff)
-      elif filter_type == "Moving Median":
-        filt_cycle = ktk.filters.median(raw_cycle, window_length=11)
+      # Apply student filter choice
+      cycle_fp_filt = None
+      if filter_mode == "Butterworth Low-pass":
+        cycle_fp_filt = ktk.filters.butter(cycle_fp_raw, fc=cutoff_fc)
 
-      # Plot overlay
-      prefix = "F1" if plate_choice == "FP1" else "F2"
+      # ---------------------------------------------------------
+      # Render Interactive Visual Comparison
+      # ---------------------------------------------------------
+      import plotly.graph_objects as go
+
+      p = "1" if plate_choice == "FP1" else "2"
       axes = [
-          ("X (M-L)", f"{prefix}X", "#ef4444"),
-          ("Y (A-P)", f"{prefix}Y", "#22c55e"),
-          ("Z (Vertical)", f"{prefix}Z", "#3b82f6"),
+          ("X (M-L)", f"F{p}X", "#ef4444"),
+          ("Y (A-P)", f"F{p}Y", "#22c55e"),
+          ("Z (Vertical)", f"F{p}Z", "#3b82f6"),
       ]
 
       fig_grf = go.Figure()
-      for label, key, color in axes:
-        # Raw trace
+      for label, ch, color in axes:
+        # Initial Raw/Unfiltered trace
         fig_grf.add_trace(
             go.Scatter(
-                x=raw_cycle.time,
-                y=raw_cycle.data[key],
+                x=cycle_fp_raw.time,
+                y=cycle_fp_raw.data[ch],
                 mode="lines",
-                line=dict(color=color, dash="dot", width=1),
-                opacity=0.45,
-                name=f"{label} Raw",
+                line=dict(
+                    color=color,
+                    dash="dot" if cycle_fp_filt is not None else "solid",
+                    width=1.5 if cycle_fp_filt is not None else 2.5,
+                ),
+                opacity=0.5 if cycle_fp_filt is not None else 1.0,
+                name=f"{label} Raw{' (Debiased)' if debias_choice else ''}",
             )
         )
-        if filt_cycle is not None:
+        # Filtered trace overlay
+        if cycle_fp_filt is not None:
           fig_grf.add_trace(
               go.Scatter(
-                  x=filt_cycle.time,
-                  y=filt_cycle.data[key],
+                  x=cycle_fp_filt.time,
+                  y=cycle_fp_filt.data[ch],
                   mode="lines",
                   line=dict(color=color, width=2.5),
-                  name=f"{label} Filtered",
+                  name=f"{label} Filtered ({cutoff_fc} Hz)",
               )
           )
 
+      status_text = (
+          f"Zeroed (Debiased) | Filter: {cutoff_fc} Hz"
+          if debias_choice and cycle_fp_filt is not None
+          else (
+              "Raw (Non-Zeroed) | Filtered"
+              if cycle_fp_filt is not None
+              else "Raw Unfiltered"
+          )
+      )
       fig_grf.update_layout(
-          title=f"{plate_choice} Cycle Forces ({filter_type})",
+          title=f"{plate_choice} Force Traces — [{status_text}]",
           xaxis_title="Time (s)",
           yaxis_title="Force (N)",
           template="plotly_dark",
@@ -793,110 +908,188 @@ if (
       )
       st.plotly_chart(fig_grf, use_container_width=True)
 
-      st.markdown("#### 🎯 Student Decision: Validate Filter")
-      if st.button("Accept Filter Parameters", type="primary"):
+      # Lock-in button to progress to Step 3
+      st.markdown("#### 🎯 Confirm Decisions")
+      if st.button("Accept Force Processing Decisions", type="primary"):
         st.session_state["chosen_plate"] = plate_choice
-        st.session_state["chosen_filter"] = filter_type
-        st.session_state["chosen_fc"] = cutoff
+        st.session_state["apply_debias"] = debias_choice
+        st.session_state["chosen_filter"] = filter_mode
+        st.session_state["chosen_fc"] = cutoff_fc if cutoff_fc else 100
+        # Store processed TimeSeries for downstream COP calculation
+        st.session_state["cycle_fp_processed"] = (
+            cycle_fp_filt if cycle_fp_filt is not None else cycle_fp_raw
+        )
         st.session_state["filter_locked"] = True
+        st.success("Decisions saved! Proceeding to Step 3.")
         st.rerun()
-
+        
   # =========================================================================
-  # STEP 3: CENTER OF PRESSURE (UNLOCKED ONLY AFTER FILTER CONFIRMATION)
+  # STEP 3: CENTER OF PRESSURE (COP) & PLANAR BUTTERFLY PLOT
   # =========================================================================
-  if st.session_state["filter_locked"]:
-    with active_tabs[2]:
-      st.subheader("Step 3: Center of Pressure & Butterfly Path")
-      st.caption(
-          f"Calculated using your confirmed parameters: Plate"
-          f" {st.session_state['chosen_plate']} | Filter: "
-          f"{st.session_state['chosen_filter']} ({st.session_state['chosen_fc']} Hz)."
-      )
+        if st.session_state["filter_locked"]:
+          with active_tabs[2]:
+            st.subheader("Step 3: Center of Pressure (COP) Analysis")
+            fc_val = st.session_state.get('chosen_fc', 100)
+            filt_name = st.session_state.get('chosen_filter', 'None (Raw)')
+            filt_suffix = f" ({fc_val} Hz)" if filt_name == "Butterworth Low-pass" else ""
+            debias_status = "Zeroed (Debiased)" if st.session_state.get('apply_debias', False) else "Raw (Non-Zeroed)"
 
-      # Extract the confirmed signal
-      chosen_raw = (
-          st.session_state["FP1_debiased"]
-          if st.session_state["chosen_plate"] == "FP1"
-          else st.session_state["FP2_debiased"]
-      )
-      cycle_raw = chosen_raw.get_ts_between_times(
-          st.session_state["t_start"], st.session_state["t_end"], inclusive=True
-      )
-
-      if st.session_state["chosen_filter"] == "Butterworth Low-pass":
-        final_fp = ktk.filters.butter(
-            cycle_raw, fc=st.session_state["chosen_fc"]
-        )
-      else:
-        final_fp = cycle_raw
-
-      p = "1" if st.session_state["chosen_plate"] == "FP1" else "2"
-      fz = final_fp.data[f"F{p}Z"]
-      mx = final_fp.data[f"M{p}X"]
-      my = final_fp.data[f"M{p}Y"]
-
-      # Gate swing phase to prevent asymptotic division spikes
-      valid_contact = np.abs(fz) >= 40.0
-      cop_x = np.where(valid_contact, -my / (fz + 1e-6), np.nan)
-      cop_y = np.where(valid_contact, mx / (fz + 1e-6), np.nan)
-
-      c_plot1, c_plot2 = st.columns(2)
-      with c_plot1:
-        # Butterfly Plot
-        valid_idx = np.where(valid_contact)[0]
-        fig_bf = go.Figure()
-        if len(valid_idx) > 0:
-          fig_bf.add_trace(
-              go.Scatter(
-                  x=cop_x[valid_idx],
-                  y=cop_y[valid_idx],
-                  mode="lines+markers",
-                  marker=dict(
-                      size=4,
-                      color=final_fp.time[valid_idx],
-                      colorscale="Viridis",
-                      showscale=True,
-                      colorbar=dict(title="Time (s)"),
+            st.caption(
+                f"Calculated directly from your confirmed parameters: **{st.session_state['chosen_plate']}** | "
+                f"Baseline: **{debias_status}** | "
+                f"Filter: **{filt_name}{filt_suffix}**"
+            )
+      
+            # Extract the confirmed processed TimeSeries from Step 2
+            final_fp = st.session_state["cycle_fp_processed"]
+            plate_prefix = "1" if st.session_state["chosen_plate"] == "FP1" else "2"
+      
+            fz_key = f"F{plate_prefix}Z"
+            mx_key = f"M{plate_prefix}X"
+            my_key = f"M{plate_prefix}Y"
+      
+            fz = final_fp.data[fz_key]
+            mx = final_fp.data[mx_key]
+            my = final_fp.data[my_key]
+      
+            # Controls for threshold gate and display options
+            cop_ctrl1, cop_ctrl2 = st.columns([2, 2])
+            with cop_ctrl1:
+              fz_threshold = st.slider(
+                  "Vertical Force Gate (|Fz| ≥ N):",
+                  min_value=10.0,
+                  max_value=200.0,
+                  value=50.0,
+                  step=5.0,
+                  help=(
+                      "Masks calculations when the foot is off the plate to prevent"
+                      " division-by-zero asymptotes during swing phase."
                   ),
-                  line=dict(color="rgba(255, 255, 255, 0.6)", width=2),
-                  name="COP Trajectory",
               )
-          )
-        fig_bf.update_layout(
-            title="Planar COP (Butterfly) Path",
-            xaxis_title="Medio-Lateral COPx (m)",
-            yaxis_title="Antero-Posterior COPy (m)",
-            template="plotly_dark",
-            yaxis=dict(scaleanchor="x", scaleratio=1),
-        )
-        st.plotly_chart(fig_bf, use_container_width=True)
-
-      with c_plot2:
-        # Time-series COP
-        fig_ts = go.Figure()
-        fig_ts.add_trace(
-            go.Scatter(
-                x=final_fp.time,
-                y=cop_x,
-                mode="lines",
-                name="COPx (M-L)",
-                line=dict(color="#3b82f6", width=2),
-            )
-        )
-        fig_ts.add_trace(
-            go.Scatter(
-                x=final_fp.time,
-                y=cop_y,
-                mode="lines",
-                name="COPy (A-P)",
-                line=dict(color="#ef4444", width=2),
-            )
-        )
-        fig_ts.update_layout(
-            title="COP Displacement vs. Time",
-            xaxis_title="Time (s)",
-            yaxis_title="Displacement (m)",
-            template="plotly_dark",
-            hovermode="x unified",
-        )
-        st.plotly_chart(fig_ts, use_container_width=True)
+            with cop_ctrl2:
+              show_arrows = st.checkbox(
+                  "Show Direction of Progression Markers", value=True
+              )
+      
+            # Standard Biomechanical COP Equations:
+            # COPx = -My / Fz  (Medio-Lateral)
+            # COPy = +Mx / Fz  (Antero-Posterior)
+            EPSILON = 1e-6
+            contact_mask = np.abs(fz) >= fz_threshold
+      
+            cop_x = np.where(contact_mask, -my / (fz + EPSILON), np.nan)
+            cop_y = np.where(contact_mask, mx / (fz + EPSILON), np.nan)
+      
+            import plotly.graph_objects as go
+      
+            col_butterfly, col_timeseries = st.columns(2)
+      
+            # --- Left Panel: 2D Planar Butterfly Plot (COPx vs COPy) ---
+            with col_butterfly:
+              valid_indices = np.where(contact_mask)[0]
+              fig_butterfly = go.Figure()
+      
+              if len(valid_indices) == 0:
+                st.warning(
+                    f"No frames found where |Fz| ≥ {fz_threshold} N. Lower the"
+                    " vertical force gate slider above."
+                )
+              else:
+                x_valid = cop_x[valid_indices]
+                y_valid = cop_y[valid_indices]
+                t_valid = final_fp.time[valid_indices]
+      
+                # Continuous line colored by progression of time
+                fig_butterfly.add_trace(
+                    go.Scatter(
+                        x=x_valid,
+                        y=y_valid,
+                        mode="lines+markers" if show_arrows else "lines",
+                        line=dict(color="rgba(255, 255, 255, 0.7)", width=2),
+                        marker=dict(
+                            size=5 if show_arrows else 2,
+                            color=t_valid,
+                            colorscale="Viridis",
+                            showscale=True,
+                            colorbar=dict(title="Cycle Time (s)", thickness=12),
+                        ),
+                        hovertext=[
+                            f"Time: {t:.3f}s<br>COPx: {x:.3f}m<br>COPy: {y:.3f}m"
+                            for t, x, y in zip(t_valid, x_valid, y_valid)
+                        ],
+                        hoverinfo="text",
+                        name="COP Path",
+                    )
+                )
+      
+                # Add initial contact (Heel Strike) and push-off (Toe Off) markers
+                fig_butterfly.add_trace(
+                    go.Scatter(
+                        x=[x_valid[0]],
+                        y=[y_valid[0]],
+                        mode="markers+text",
+                        marker=dict(size=12, color="#22c55e", symbol="star"),
+                        text=["Start (Initial Contact)"],
+                        textposition="top center",
+                        name="Initial Contact",
+                    )
+                )
+                fig_butterfly.add_trace(
+                    go.Scatter(
+                        x=[x_valid[-1]],
+                        y=[y_valid[-1]],
+                        mode="markers+text",
+                        marker=dict(size=12, color="#ef4444", symbol="x"),
+                        text=["End (Toe Off)"],
+                        textposition="bottom center",
+                        name="Toe Off",
+                    )
+                )
+      
+              fig_butterfly.update_layout(
+                  title="Planar Butterfly Path (COPx vs. COPy)",
+                  xaxis_title="Medio-Lateral Displacement COPx (m)",
+                  yaxis_title="Antero-Posterior Displacement COPy (m)",
+                  template="plotly_dark",
+                  yaxis=dict(scaleanchor="x", scaleratio=1),  # Preserve true aspect ratio
+                  margin=dict(l=20, r=20, t=40, b=20),
+                  legend=dict(
+                      orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+                  ),
+              )
+              st.plotly_chart(fig_butterfly, use_container_width=True)
+      
+            # --- Right Panel: COP Coordinates vs Time ---
+            with col_timeseries:
+              fig_ts = go.Figure()
+              fig_ts.add_trace(
+                  go.Scatter(
+                      x=final_fp.time,
+                      y=cop_x,
+                      mode="lines",
+                      line=dict(color="#3b82f6", width=2),
+                      name="COPx (Medio-Lateral)",
+                  )
+              )
+              fig_ts.add_trace(
+                  go.Scatter(
+                      x=final_fp.time,
+                      y=cop_y,
+                      mode="lines",
+                      line=dict(color="#ef4444", width=2),
+                      name="COPy (Antero-Posterior)",
+                  )
+              )
+      
+              fig_ts.update_layout(
+                  title="COP Displacement Components vs. Time",
+                  xaxis_title="Time (s)",
+                  yaxis_title="Displacement (m)",
+                  template="plotly_dark",
+                  hovermode="x unified",
+                  margin=dict(l=20, r=20, t=40, b=20),
+                  legend=dict(
+                      orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+                  ),
+              )
+              st.plotly_chart(fig_ts, use_container_width=True)
