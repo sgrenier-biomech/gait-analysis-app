@@ -517,22 +517,35 @@ def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: 
     fp1.resample(120, kind="linear", in_place=True)
     fp2.resample(120, kind="linear", in_place=True)
     
-    # Shift time vectors so GRF and Kinematics share the identical global clock
-    raw_analogs.time = raw_analogs.time + time_offset
-    FP1.time = FP1.time + time_offset
-    FP2.time = FP2.time + time_offset
-    if fp1 is not None:
-      fp1.time = fp1.time + time_offset
-    if fp2 is not None:
-      fp2.time = fp2.time + time_offset
-
+# Shift time vectors so GRF and Kinematics share the identical global clock
+    t0_target = float(markers.time[0])
+    for ts_obj in [raw_analogs, FP1, fp1, FP2, fp2]:
+      if ts_obj is not None:
+        shift = t0_target - float(ts_obj.time[0])
+        if abs(shift) > 1e-4:
+          ts_obj.time = ts_obj.time + shift
 
     results = compute_inverse_dynamics(
-        omega, alpha, com_accelerations, joint_positions, com_positions, fplate,
-        mass_total, height_total, FP1_filtered=fp1, FP2_filtered=fp2
+        omega,
+        alpha,
+        com_accelerations,
+        joint_positions,
+        com_positions,
+        fplate,
+        mass_total,
+        height_total,
+        FP1_filtered=fp1,
+        FP2_filtered=fp2,
     )
-    return markers, angles, results, FP1, fp1, FP2, fp2, raw_analogs
 
+    # Re-verify alignment right before returning in case compute_inverse_dynamics mutated time
+    for ts_obj in [raw_analogs, FP1, fp1, FP2, fp2]:
+      if ts_obj is not None:
+        shift = t0_target - float(ts_obj.time[0])
+        if abs(shift) > 1e-4:
+          ts_obj.time = ts_obj.time + shift
+
+    return markers, angles, results, FP1, fp1, FP2, fp2, raw_analogs
 
 # =======================================================
 # STREAMLIT UI
