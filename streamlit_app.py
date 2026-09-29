@@ -936,13 +936,13 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     with st.expander("💡 Lab Question: Explain Your Selection & The 4 Lines"):
       st.markdown(f"""
         * **Why did you select `{chosen_com_method}` as your best estimate?**
-          * Reflect on where the whole-body center of mass lies during upright human locomotion (typically just anterior to the second sacral vertebra, within the pelvic cavity).
-          * Compare how a single surface marker (like `SACR`) behaves relative to the average midpoint of the anterior and posterior pelvic landmarks.
+          * Reflect on where the whole-body center of mass lies during upright human locomotion.
+          * Compare how a single surface marker behaves relative to an average midpoint of two anatomical landmarks.
         * **What does each line on your plot represent?**
-          * **Line 1 (X, Red):** Medio-lateral displacement (side-to-side oscillation toward the stance limb).
-          * **Line 2 (Y, Green):** Antero-posterior displacement (continuous forward progression down the laboratory walkway).
-          * **Line 3 (Z, Blue):** Vertical displacement (cyclical elevation oscillating between double support troughs and single support crests).
-          * **Line 4 (Purple, Dot):** Constant flat line at **1.0**. In affine geometry and Kineticstoolkit, point positions are stored as homogeneous 4-element vectors $[x, y, z, 1]^T$ to allow standard $4 \\times 4$ transformation matrices to handle translations and rotations.
+          * **Line 1 (X, Red):**M-L
+          * **Line 2 (Y, Green):** A-P 
+          * **Line 3 (Z, Blue):** Vertical
+          * **Line 4 (Purple, Dot):** Constant flat line at **1.0**. In Kineticstoolkit, point positions are stored as homogeneous 4-element vectors $[x, y, z, 1]^T$ to allow standard $4 \\times 4$ transformation matrices to handle translations and rotations.
         """)
 
 
