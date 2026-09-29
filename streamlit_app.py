@@ -829,31 +829,94 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     markers_ts = st.session_state["markers"]
 
+
+
     # --- Part 1: Centre of Mass Trajectory (4 Lines) ---
     st.markdown("#### Part 1: Best Estimate of Centre of Mass (CoM)")
     st.caption(
-        "Plotting the homogeneous 4D coordinates of the estimated pelvis/body"
-        " CoM."
+        "Evaluate available markers and anatomical approximations to select"
+        " your best estimate of whole-body CoM."
     )
 
-    # Estimate CoM from pelvis landmarks
-    lt_hip = 0.5 * (markers_ts.data["LGTR"] + markers_ts.data["LASI"])
-    rt_hip = 0.5 * (markers_ts.data["RGTR"] + markers_ts.data["RASI"])
-    pelvis_com = lt_hip + 0.5 * (rt_hip - lt_hip)  # Shape (N, 4)
+    # 1. Provide student options for CoM estimates
+    com_candidate_options = [
+        "Pelvis Center (Midpoint between Right & Left Hip Joint Centers)",
+        "Sacrum Marker (SACR)",
+        "Mid-ASIS (Midpoint between RASI & LASI)",
+        "Pelvis Rigid Body Origin (SACR / ASIS Plane)",
+        "Specific Marker of Your Choice",
+    ]
 
+    c_opt1, c_opt2 = st.columns([2, 1])
+    with c_opt1:
+      chosen_com_method = st.selectbox(
+          "Student Decision: Select Best CoM Estimate:",
+          com_candidate_options,
+          index=0,
+          key="as2_com_method",
+      )
+
+    with c_opt2:
+      custom_marker = None
+      if chosen_com_method == "Specific Marker of Your Choice":
+        custom_marker = st.selectbox(
+            "Select Marker:",
+            list(markers_ts.data.keys()),
+            key="as2_custom_com_marker",
+        )
+
+    # 2. Compute or extract the chosen estimate (ensuring shape is N x 4)
+    if (
+        chosen_com_method
+        == "Pelvis Center (Midpoint between Right & Left Hip Joint Centers)"
+    ):
+      lt_hip = 0.5 * (markers_ts.data["LGTR"] + markers_ts.data["LASI"])
+      rt_hip = 0.5 * (markers_ts.data["RGTR"] + markers_ts.data["RASI"])
+      selected_com = lt_hip + 0.5 * (rt_hip - lt_hip)
+      plot_title = "Estimated CoM: Hip Joint Center Midpoint (Pelvis Center)"
+
+    elif chosen_com_method == "Sacrum Marker (SACR)":
+      selected_com = markers_ts.data["SACR"]
+      plot_title = "Estimated CoM: Sacrum Marker (SACR)"
+
+    elif chosen_com_method == "Mid-ASIS (Midpoint between RASI & LASI)":
+      selected_com = 0.5 * (markers_ts.data["RASI"] + markers_ts.data["LASI"])
+      plot_title = "Estimated CoM: Mid-ASIS"
+
+    elif (
+        chosen_com_method == "Pelvis Rigid Body Origin (SACR / ASIS Plane)"
+    ):
+      selected_com = (
+          0.5 * (markers_ts.data["RASI"] + markers_ts.data["LASI"])
+          + markers_ts.data["SACR"]
+      ) * 0.5
+      plot_title = "Estimated CoM: Pelvis Centroid"
+
+    else:
+      selected_com = markers_ts.data[custom_marker]
+      plot_title = f"Estimated CoM: Marker {custom_marker}"
+
+    # Ensure homogeneous coordinates (N, 4) with W = 1.0
+    if selected_com.shape[-1] == 3:
+      ones_col = np.ones((len(selected_com), 1))
+      selected_com = np.hstack([selected_com, ones_col])
+    elif selected_com.shape[-1] == 4:
+      selected_com[:, 3] = 1.0
+
+    # 3. Plot the 4 lines
     fig_as2_com = go.Figure()
     com_lines_info = [
         ("Line 1: X (Medio-Lateral)", "#ef4444", "solid"),
         ("Line 2: Y (Antero-Posterior)", "#22c55e", "solid"),
         ("Line 3: Z (Vertical)", "#3b82f6", "solid"),
-        ("Line 4: Homogeneous Scale (W = 1.0)", "#a855f7", "dot"),
+        ("Line 4: Homogeneous Coordinate (W = 1.0)", "#a855f7", "dot"),
     ]
 
     for col_idx, (name, color, dash) in enumerate(com_lines_info):
       fig_as2_com.add_trace(
           go.Scatter(
               x=markers_ts.time,
-              y=pelvis_com[:, col_idx],
+              y=selected_com[:, col_idx],
               mode="lines",
               name=name,
               line=dict(color=color, dash=dash, width=2),
@@ -861,7 +924,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       )
 
     fig_as2_com.update_layout(
-        title="Centre of Mass (Pelvis Estimate) - 4-Line Trajectory",
+        title=f"{plot_title} - 4-Line Trajectory",
         xaxis_title="Time (s)",
         yaxis_title="Position (m) / Homogeneous Unit",
         template="plotly_dark",
@@ -870,17 +933,18 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
     st.plotly_chart(fig_as2_com, use_container_width=True)
 
-    with st.expander("💡 Lab Question: Explain the 4 Lines on the CoM Plot"):
-      st.markdown(
-          """
-            * **Line 1 (X, Red):** Medio-lateral displacement (side-to-side body sway toward the supporting limb during each stance phase).
-            * **Line 2 (Y, Green):** Antero-posterior displacement (steady forward progression down the laboratory walkway).
-            * **Line 3 (Z, Blue):** Vertical displacement (cyclical elevation oscillating between ~0.9 m and 1.0 m, dipping at double support and peaking at mid-stance).
-            * **Line 4 (Purple, Dot):** Homogeneous scale coordinate ($W = 1.0$). In rigid body kinematics and Kineticstoolkit, 3D positions are stored as 4-element vectors $[x, y, z, 1]^T$ to allow matrix multiplications for translations and rotations.
-            """
-      )
+    with st.expander("💡 Lab Question: Explain Your Selection & The 4 Lines"):
+      st.markdown(f"""
+        * **Why did you select `{chosen_com_method}` as your best estimate?**
+          * Reflect on where the whole-body center of mass lies during upright human locomotion (typically just anterior to the second sacral vertebra, within the pelvic cavity).
+          * Compare how a single surface marker (like `SACR`) behaves relative to the average midpoint of the anterior and posterior pelvic landmarks.
+        * **What does each line on your plot represent?**
+          * **Line 1 (X, Red):** Medio-lateral displacement (side-to-side oscillation toward the stance limb).
+          * **Line 2 (Y, Green):** Antero-posterior displacement (continuous forward progression down the laboratory walkway).
+          * **Line 3 (Z, Blue):** Vertical displacement (cyclical elevation oscillating between double support troughs and single support crests).
+          * **Line 4 (Purple, Dot):** Constant flat line at **1.0**. In affine geometry and Kineticstoolkit, point positions are stored as homogeneous 4-element vectors $[x, y, z, 1]^T$ to allow standard $4 \\times 4$ transformation matrices to handle translations and rotations.
+        """)
 
-    st.markdown("---")
 
     # --- Part 2: Full-Trial Ground Reaction Force ---
     st.markdown("#### Part 2: Full-Trial Ground Reaction Forces")
@@ -903,13 +967,13 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     p_num = "1" if as2_plate == "FP1" else "2"
 
     grf_channel_meta = [
-        (f"F{p_num}X (Medio-Lateral)", f"F{p_num}X", "#ef4444"),
+        (f"F{p_num}X", f"F{p_num}X", "#ef4444"),
         (
-            f"F{p_num}Y (Antero-Posterior: Braking/Propulsion)",
+            f"F{p_num}Y",
             f"F{p_num}Y",
             "#22c55e",
         ),
-        (f"F{p_num}Z (Vertical Force)", f"F{p_num}Z", "#3b82f6"),
+        (f"F{p_num}Z", f"F{p_num}Z", "#3b82f6"),
     ]
 
     fig_full_grf = go.Figure()
@@ -938,7 +1002,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     with st.expander("💡 Lab Question: What Have You Plotted in Part 2?"):
       st.markdown(
           f"""
-            * **Explanation:** You have plotted the calibrated tri-axial Ground Reaction Force components ($F_x, F_y, F_z$) for **{as2_plate}** in physical units of **Newtons (N)** across the entire trial duration.
+            * **Explanation:** You have plotted the calibrated tri-axial Ground Reaction Force components. Explain what each component is.
             * **Signal Behavior:** The signal hovers near 0 N when no subject is on the plate and displays prominent deflections during the foot contact phase.
             """
       )
