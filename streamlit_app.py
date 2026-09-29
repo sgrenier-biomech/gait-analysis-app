@@ -889,7 +889,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.subheader("Assignment 1: Inspecting Raw Marker & Analog Data")
     st.markdown(
         """
-        Complete the tasks below, record your explanations, and copy the generated Python code for your assignment report submission.
+        Complete the tasks below with explanations for your choices.
         """
     )
 
@@ -974,11 +974,11 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       st.markdown(
           f"""
             * **What points do you believe `{marker1}` and `{marker2}` are?** 
-              Identify the anatomical landmarks corresponding to these acronyms based on your lab protocol (e.g., `RHEE`/`LHEE` = Right/Left Heel, `SACR` = Sacrum, `RTOE`/`LTOE` = Right/Left 2nd Metatarsal).
+              Identify the anatomical landmarks corresponding to these acronyms based on the paper's description (e.g., `RHEE`/`LHEE` = Right/Left Heel, `SACR` = Sacrum, `RTOE`/`LTOE` = Right/Left 2nd Metatarsal).
             * **What does each line represent?** 
-              * **X (Red):** Medio-lateral displacement (side-to-side position in the lab frame).
-              * **Y (Green):** Antero-posterior displacement (continuous forward progression down the walkway).
-              * **Z (Blue):** Vertical displacement (height above the floor; notice cyclical peaks during swing and dips during stance).
+              * **X (Red):** Medio-lateral displacement .
+              * **Y (Green):** Antero-posterior displacement.
+              * **Z (Blue):** Vertical displacement .
             """
       )
 
@@ -1053,77 +1053,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     st.markdown("---")
 
-    # --- Part C: Standalone Code for PDF Submission ---
-    st.markdown("#### Assignment Submission: Standalone Python Code")
-    st.caption(
-        "Copy and run this script locally to generate figures for your single"
-        " PDF submission."
-    )
-
-    c3d_path_for_script = st.session_state.get(
-        "c3d_file_path", "your_trial_file.c3d"
-    )
-    standalone_code = f"""import kineticstoolkit.lab as ktk
-import matplotlib.pyplot as plt
-
-# Load C3D File
-c3d = ktk.read_c3d(r"{c3d_path_for_script}")
-
-# -------------------------------------------------------------
-# Part A: Two Trajectory Points (Points)
-# -------------------------------------------------------------
-points = c3d["Points"]
-p1 = "{marker1}"
-p2 = "{marker2}"
-
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-
-# Plot Marker 1
-ax1.plot(points.time, points.data[p1][:, 0], label=f"{{p1}} X (M-L)", color="red")
-ax1.plot(points.time, points.data[p1][:, 1], label=f"{{p1}} Y (A-P)", color="green")
-ax1.plot(points.time, points.data[p1][:, 2], label=f"{{p1}} Z (Vertical)", color="blue")
-ax1.set_title(f"Full Trial Trajectory: {{p1}}")
-ax1.set_ylabel("Position (m)")
-ax1.grid(True)
-ax1.legend()
-
-# Plot Marker 2
-ax2.plot(points.time, points.data[p2][:, 0], label=f"{{p2}} X (M-L)", color="red", linestyle="--")
-ax2.plot(points.time, points.data[p2][:, 1], label=f"{{p2}} Y (A-P)", color="green", linestyle="--")
-ax2.plot(points.time, points.data[p2][:, 2], label=f"{{p2}} Z (Vertical)", color="blue", linestyle="--")
-ax2.set_title(f"Full Trial Trajectory: {{p2}}")
-ax2.set_xlabel("Time (s)")
-ax2.set_ylabel("Position (m)")
-ax2.grid(True)
-ax2.legend()
-plt.tight_layout()
-plt.savefig("assignment1_partA_markers.png", dpi=300)
-plt.show()
-
-# -------------------------------------------------------------
-# Part B: Raw Vertical Force Channel (Analogs)
-# -------------------------------------------------------------
-analogs = c3d["Analogs"]
-ch_name = "{chosen_analog}"
-
-plt.figure(figsize=(10, 4))
-plt.plot(analogs.time, analogs.data[ch_name], color="orange", label=f"Raw Analog: {{ch_name}}")
-plt.title(f"Raw Vertical Force Component: {{ch_name}}")
-plt.xlabel("Time (s)")
-plt.ylabel("Analog Output (Volts / Counts)")
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-plt.savefig("assignment1_partB_analog.png", dpi=300)
-plt.show()
-"""
-    st.code(standalone_code, language="python")
-    st.download_button(
-        label="💾 Download Assignment 1 Script (.py)",
-        data=standalone_code,
-        file_name="assignment1_code.py",
-        mime="text/x-python",
-    )
 
   # =========================================================================
   # STEP 1: KINEMATICS & GAIT CYCLE IDENTIFICATION
