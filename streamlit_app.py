@@ -8,10 +8,12 @@ Created on Mon Sep 14 15:10:00 2026
 import json
 import tempfile
 import copy
+import io
 from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 import kineticstoolkit.lab as ktk
+import plotly.graph_objects as go
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
@@ -549,6 +551,235 @@ def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: 
 
     return markers, angles, results, FP1, fp1, FP2, fp2, raw_analogs
 
+def render_assignment_1(c3d_file_path: str):
+  st.header("Assignment 1: Exploring Raw Kinematic & Kinetic Signals")
+  st.markdown(
+      """
+    In this assignment, you will inspect raw uncalibrated signals directly from the C3D file:
+    * **Part A:** Select two tracking markers from `Points` and examine their 3D coordinates over time.
+    * **Part B:** Select a vertical force channel from `Analogs` and analyze the raw signal behavior.
+    """
+  )
+
+  # Read C3D contents directly
+  c3d_raw = ktk.read_c3d(c3d_file_path)
+  points_ts = c3d_raw["Points"]
+  analogs_ts = c3d_raw["Analogs"]
+
+  available_markers = list(points_ts.data.keys())
+  available_analogs = list(analogs_ts.data.keys())
+
+  st.markdown("---")
+  st.subheader("Part A: 3D Trajectories of Two Markers (`Points`)")
+
+  col_m1, col_m2 = st.columns(2)
+  with col_m1:
+    marker1 = st.selectbox(
+        "Select First Marker:",
+        available_markers,
+        index=0 if available_markers else None,
+        key="as1_m1",
+    )
+  with col_m2:
+    # Default to a second marker if available
+    def_idx2 = 1 if len(available_markers) > 1 else 0
+    marker2 = st.selectbox(
+        "Select Second Marker:",
+        available_markers,
+        index=def_idx2,
+        key="as1_m2",
+    )
+
+  # Plot Marker Trajectories
+  fig_markers = go.Figure()
+  colors = ["#3b82f6", "#22c55e", "#ef4444"]
+  axis_labels = ["X (M-L)", "Y (A-P)", "Z (Vertical)"]
+
+  # Plot Marker 1
+  if marker1 in points_ts.data:
+    for i in range(3):
+      fig_markers.add_trace(
+          go.Scatter(
+              x=points_ts.time,
+              y=points_ts.data[marker1][:, i],
+              mode="lines",
+              name=f"{marker1} - {axis_labels[i]}",
+              line=dict(color=colors[i], width=2),
+          )
+      )
+
+  # Plot Marker 2
+  if marker2 in points_ts.data:
+    for i in range(3):
+      fig_markers.add_trace(
+          go.Scatter(
+              x=points_ts.time,
+              y=points_ts.data[marker2][:, i],
+              mode="lines",
+              name=f"{marker2} - {axis_labels[i]}",
+              line=dict(color=colors[i], dash="dash", width=2),
+          )
+      )
+
+  fig_markers.update_layout(
+      title=f"Full Trial Trajectories: {marker1} (Solid) vs. {marker2} (Dashed)",
+      xaxis_title="Time (s)",
+      yaxis_title="Position (m or mm)",
+      template="plotly_dark",
+      hovermode="x unified",
+      margin=dict(l=20, r=20, t=40, b=20),
+  )
+  st.plotly_chart(fig_markers, use_container_width=True)
+
+  # Student Reflection Prompt for Part A
+  with st.expander("📝 Lab Question: Part A Interpretation Guide"):
+    st.markdown(
+        f"""
+        * **What points do you believe `{marker1}` and `{marker2}` are?** 
+          *(Hint: Look at the standard marker set naming convention, e.g., RHEE = Right Heel, SACR = Sacrum, RTOE = Right 2nd Metatarsal).*
+        * **What does each line represent?**
+          * **Blue line:** Medio-lateral coordinate (X).
+          * **Green line:** Antero-posterior coordinate (Y) — indicates progression down the walkway.
+          * **Red line:** Vertical height (Z) — observe periodic dips and peaks corresponding to stance and swing.
+        """
+    )
+
+  st.markdown("---")
+  st.subheader("Part B: Vertical Force Component from `Analogs`")
+
+  # Detect common vertical analog channel names (Fz, F3, Channel 3)
+  vertical_candidates = [
+      k
+      for k in available_analogs
+      if "z" in k.lower() or "f3" in k.lower() or "force" in k.lower()
+  ]
+  default_analog = (
+      vertical_candidates[0]
+      if vertical_candidates
+      else (available_analogs[0] if available_analogs else None)
+  )
+
+  c_a1, c_a2 = st.columns([2, 1])
+  with c_a1:
+    chosen_analog = st.selectbox(
+        "Select Analog Channel (Raw Vertical Force):",
+        available_analogs,
+        index=(
+            available_analogs.index(default_analog)
+            if default_analog in available_analogs
+            else 0
+        ),
+        key="as1_analog_ch",
+    )
+  with c_a2:
+    st.caption("Raw analog data is sampled at the ADC plate frequency.")
+
+  fig_analog = go.Figure()
+  if chosen_analog in analogs_ts.data:
+    fig_analog.add_trace(
+        go.Scatter(
+            x=analogs_ts.time,
+            y=analogs_ts.data[chosen_analog],
+            mode="lines",
+            line=dict(color="#f59e0b", width=1.5),
+            name=f"Raw Analog: {chosen_analog}",
+        )
+    )
+
+  fig_analog.update_layout(
+      title=f"Raw Analog Signal: {chosen_analog}",
+      xaxis_title="Time (s)",
+      yaxis_title="Analog Output (Volts / Raw Bit Counts)",
+      template="plotly_dark",
+      hovermode="x unified",
+      margin=dict(l=20, r=20, t=40, b=20),
+  )
+  st.plotly_chart(fig_analog, use_container_width=True)
+
+  # Student Reflection Prompt for Part B
+  with st.expander("📝 Lab Question: Part B Interpretation Guide"):
+    st.markdown(
+        f"""
+        * **What have you plotted?**
+          You have plotted channel `{chosen_analog}` directly from `c3d["Analogs"]`. This is the raw electrical signal coming from the piezoelectric or strain-gauge transducers prior to coordinate calibration, baseline zeroing, and coordinate system transformation.
+        * **Does it make sense?**
+          * Notice if there is a DC offset during periods where nobody is standing on the plate.
+          * Notice high-frequency electrical noise (50/60 Hz mains humming).
+          * Notice the direction of the deflection during stance: is the vertical load represented as positive or negative voltage?
+        """
+    )
+
+  st.markdown("---")
+  st.subheader("Assignment Submission: Python Code Generator")
+  st.markdown(
+      "Copy the standalone script below to run locally or paste into your final"
+      " assignment PDF."
+  )
+
+  standalone_code = f"""import kineticstoolkit.lab as ktk
+import matplotlib.pyplot as plt
+
+# 1. Load the C3D file
+c3d_data = ktk.read_c3d("{c3d_file_path}")
+
+# ==========================================
+# PART A: Plot Two Trajectory Points
+# ==========================================
+points = c3d_data["Points"]
+marker1_name = "{marker1}"
+marker2_name = "{marker2}"
+
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+
+# Plot Marker 1
+ax1.plot(points.time, points.data[marker1_name][:, 0], label=f"{{marker1_name}} X (M-L)", color="blue")
+ax1.plot(points.time, points.data[marker1_name][:, 1], label=f"{{marker1_name}} Y (A-P)", color="green")
+ax1.plot(points.time, points.data[marker1_name][:, 2], label=f"{{marker1_name}} Z (Vertical)", color="red")
+ax1.set_title(f"Full Trial Trajectory: {{marker1_name}}")
+ax1.set_ylabel("Position (m)")
+ax1.grid(True)
+ax1.legend()
+
+# Plot Marker 2
+ax2.plot(points.time, points.data[marker2_name][:, 0], label=f"{{marker2_name}} X (M-L)", linestyle="--", color="blue")
+ax2.plot(points.time, points.data[marker2_name][:, 1], label=f"{{marker2_name}} Y (A-P)", linestyle="--", color="green")
+ax2.plot(points.time, points.data[marker2_name][:, 2], label=f"{{marker2_name}} Z (Vertical)", linestyle="--", color="red")
+ax2.set_title(f"Full Trial Trajectory: {{marker2_name}}")
+ax2.set_xlabel("Time (s)")
+ax2.set_ylabel("Position (m)")
+ax2.grid(True)
+ax2.legend()
+plt.tight_layout()
+plt.savefig("assignment1_partA_markers.png", dpi=300)
+plt.show()
+
+# ==========================================
+# PART B: Plot Vertical Force from Analogs
+# ==========================================
+analogs = c3d_data["Analogs"]
+vertical_channel = "{chosen_analog}"
+
+plt.figure(figsize=(10, 4))
+plt.plot(analogs.time, analogs.data[vertical_channel], color="orange", label=vertical_channel)
+plt.title(f"Raw Vertical Force Signal: {{vertical_channel}}")
+plt.xlabel("Time (s)")
+plt.ylabel("Raw Voltage / ADC Units")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.savefig("assignment1_partB_analogs.png", dpi=300)
+plt.show()
+"""
+
+  st.code(standalone_code, language="python")
+
+  st.download_button(
+      label="💾 Download Assignment 1 Python Script (.py)",
+      data=standalone_code,
+      file_name="assignment1_signals.py",
+      mime="text/x-python",
+  )
+
 # =======================================================
 # STREAMLIT UI
 # =======================================================
@@ -565,51 +796,54 @@ uploaded_file = st.sidebar.file_uploader("Upload a C3D file", type=["c3d"])
 selected_file_path = None
 
 if uploaded_file is not None:
-   with tempfile.NamedTemporaryFile(delete=False, suffix=".c3d") as tmp:
-       tmp.write(uploaded_file.read())
-       selected_file_path = tmp.name
+  with tempfile.NamedTemporaryFile(delete=False, suffix=".c3d") as tmp:
+    tmp.write(uploaded_file.read())
+    selected_file_path = tmp.name
+    st.session_state["c3d_file_path"] = selected_file_path
 
 if st.button("Process Data", type="primary"):
-    if not selected_file_path:
-        st.error("Select or upload a .c3d file first.")
-    else:
-        with st.spinner("Processing file..."):
-            try:
-                (
-                    markers,
-                    angles,
-                    results,
-                    FP1_raw,
-                    fp1_filt,
-                    FP2_raw,
-                    fp2_filt,
-                    raw_analogs,
-                ) = run_segment_kinematics(selected_file_path, mass, height)
+  if not selected_file_path:
+    st.error("Select or upload a .c3d file first.")
+  else:
+    with st.spinner("Processing file..."):
+      try:
+        (
+            markers,
+            angles,
+            results,
+            FP1_raw,
+            fp1_filt,
+            FP2_raw,
+            fp2_filt,
+            raw_analogs,
+        ) = run_segment_kinematics(selected_file_path, mass, height)
 
-                st.session_state["markers"] = markers
-                st.session_state["angles"] = angles
-                st.session_state["results"] = results
+        st.session_state["markers"] = markers
+        st.session_state["angles"] = angles
+        st.session_state["results"] = results
 
-                # Store both raw and default-filtered versions
-                st.session_state["FP1_raw"] = FP1_raw
-                st.session_state["FP2_raw"] = FP2_raw
-                st.session_state["FP1_default_filt"] = fp1_filt
-                st.session_state["FP2_default_filt"] = fp2_filt
-                st.session_state["raw_analogs"] = raw_analogs
+        # Store both raw and default-filtered versions
+        st.session_state["FP1_raw"] = FP1_raw
+        st.session_state["FP2_raw"] = FP2_raw
+        st.session_state["FP1_default_filt"] = fp1_filt
+        st.session_state["FP2_default_filt"] = fp2_filt
+        st.session_state["raw_analogs"] = raw_analogs
 
-                # Workflow and decision states
-                st.session_state["cycle_locked"] = False
-                st.session_state["filter_locked"] = False
-                st.session_state["t_start"] = float(angles.time[0])
-                st.session_state["t_end"] = float(min(angles.time[0] + 1.2, angles.time[-1]))
-                st.session_state["chosen_fc"] = 100
-                st.session_state["apply_debias"] = False
-                st.session_state["step1_version"] = 0
+        # Workflow and decision states
+        st.session_state["cycle_locked"] = False
+        st.session_state["filter_locked"] = False
+        st.session_state["t_start"] = float(angles.time[0])
+        st.session_state["t_end"] = float(
+            min(angles.time[0] + 1.2, angles.time[-1])
+        )
+        st.session_state["chosen_fc"] = 100
+        st.session_state["apply_debias"] = False
+        st.session_state["step1_version"] = 0
 
-                st.rerun()
+        st.rerun()
 
-            except Exception as e:
-                st.error(f"Error: {e}")
+      except Exception as e:
+        st.error(f"Error: {e}")
 
 # Initialize persistent student workflow states if not already set
 for key, default in [
@@ -622,27 +856,279 @@ for key, default in [
     ("chosen_fc", 100),
     ("step1_version", 0),
 ]:
-    if key not in st.session_state:
-        st.session_state[key] = default
+  if key not in st.session_state:
+    st.session_state[key] = default
 
 # Render tabs when data is present in session state
 if "angles" in st.session_state and "FP1_raw" in st.session_state:
-  st.success("Analysis completed! Begin with Step 1 below.")
+  st.success("Analysis completed! Begin with Assignment 1 below.")
   st.markdown("---")
 
   # Define dynamic tabs that unlock sequentially
-  tab_labels = ["1. Kinematics & Cycle Selection"]
+  tab_labels = [
+      "Assignment 1: Raw Signals",
+      "Step 1: Kinematics & Cycle Selection",
+  ]
   if st.session_state.get("cycle_locked", False):
-    tab_labels.append("2. GRF Decisions")
+    tab_labels.append("Step 2: GRF Decisions")
   if st.session_state.get("filter_locked", False):
-    tab_labels.extend(["3. COP Analysis", "4. Joint Kinetics", "5. 3D Animation"])
+    tab_labels.extend(
+        ["Step 3: COP Analysis", "4. Joint Kinetics", "5. 3D Animation"]
+    )
 
   active_tabs = st.tabs(tab_labels)
 
-# =========================================================================
-  # STEP 1: KINEMATICS & GAIT CYCLE IDENTIFICATION
+  import copy
+  import numpy as np
+  import plotly.graph_objects as go
+
+  # =========================================================================
+  # ASSIGNMENT 1: RAW SIGNALS (POINTS & ANALOGS)
   # =========================================================================
   with active_tabs[0]:
+    st.subheader("Assignment 1: Inspecting Raw Marker & Analog Data")
+    st.markdown(
+        """
+        Complete the tasks below, record your explanations, and copy the generated Python code for your assignment report submission.
+        """
+    )
+
+    markers_ts = st.session_state["markers"]
+    analogs_ts = st.session_state["raw_analogs"]
+    available_markers = list(markers_ts.data.keys())
+    available_analogs = list(analogs_ts.data.keys())
+
+    # --- Part A: Points ---
+    st.markdown("#### Part A: Full-Trial Trajectories of Two Points (`Points`)")
+    st.caption("Select two markers of your choice to inspect.")
+
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+      def_idx1 = (
+          available_markers.index("RHEE")
+          if "RHEE" in available_markers
+          else 0
+          if available_markers
+          else 0
+      )
+      marker1 = st.selectbox(
+          "Select First Point:",
+          available_markers,
+          index=def_idx1,
+          key="as1_p1",
+      )
+    with col_m2:
+      def_idx2 = (
+          available_markers.index("LHEE")
+          if "LHEE" in available_markers
+          else 1
+          if len(available_markers) > 1
+          else 0
+      )
+      marker2 = st.selectbox(
+          "Select Second Point:",
+          available_markers,
+          index=def_idx2,
+          key="as1_p2",
+      )
+
+    fig_as1_pts = go.Figure()
+    colors = ["#ef4444", "#22c55e", "#3b82f6"]  # X, Y, Z
+    axis_names = ["X (Medio-Lateral)", "Y (Antero-Posterior)", "Z (Vertical)"]
+
+    if marker1 in markers_ts.data:
+      for i in range(3):
+        fig_as1_pts.add_trace(
+            go.Scatter(
+                x=markers_ts.time,
+                y=markers_ts.data[marker1][:, i],
+                mode="lines",
+                name=f"{marker1} - {axis_names[i]}",
+                line=dict(color=colors[i], width=2),
+            )
+        )
+
+    if marker2 in markers_ts.data:
+      for i in range(3):
+        fig_as1_pts.add_trace(
+            go.Scatter(
+                x=markers_ts.time,
+                y=markers_ts.data[marker2][:, i],
+                mode="lines",
+                name=f"{marker2} - {axis_names[i]}",
+                line=dict(color=colors[i], width=2, dash="dash"),
+            )
+        )
+
+    fig_as1_pts.update_layout(
+        title=f"3D Trajectories: {marker1} (Solid) vs. {marker2} (Dashed)",
+        xaxis_title="Time (s)",
+        yaxis_title="Position (m)",
+        template="plotly_dark",
+        hovermode="x unified",
+        margin=dict(l=20, r=20, t=40, b=20),
+    )
+    st.plotly_chart(fig_as1_pts, use_container_width=True)
+
+    with st.expander("💡 Assignment Helper: Part A Questions"):
+      st.markdown(
+          f"""
+            * **What points do you believe `{marker1}` and `{marker2}` are?** 
+              Identify the anatomical landmarks corresponding to these acronyms based on your lab protocol (e.g., `RHEE`/`LHEE` = Right/Left Heel, `SACR` = Sacrum, `RTOE`/`LTOE` = Right/Left 2nd Metatarsal).
+            * **What does each line represent?** 
+              * **X (Red):** Medio-lateral displacement (side-to-side position in the lab frame).
+              * **Y (Green):** Antero-posterior displacement (continuous forward progression down the walkway).
+              * **Z (Blue):** Vertical displacement (height above the floor; notice cyclical peaks during swing and dips during stance).
+            """
+      )
+
+    st.markdown("---")
+
+    # --- Part B: Analogs ---
+    st.markdown(
+        "#### Part B: Raw Vertical Force Component from `Analogs` (Not Points)"
+    )
+    st.caption(
+        "Select the raw vertical analog channel to inspect before calibration"
+        " or zeroing."
+    )
+
+    vertical_candidates = [
+        k
+        for k in available_analogs
+        if "fz" in k.lower() or "f1z" in k.lower() or "force" in k.lower()
+    ]
+    def_analog_idx = (
+        available_analogs.index(vertical_candidates[0])
+        if vertical_candidates
+        else 0
+    )
+
+    c_a1, c_a2 = st.columns([2, 1])
+    with c_a1:
+      chosen_analog = st.selectbox(
+          "Select Raw Analog Channel:",
+          available_analogs,
+          index=def_analog_idx,
+          key="as1_analog_ch",
+      )
+    with c_a2:
+      st.caption(
+          f"Analog channels recorded: {len(available_analogs)} total channels."
+      )
+
+    fig_as1_analog = go.Figure()
+    if chosen_analog in analogs_ts.data:
+      fig_as1_analog.add_trace(
+          go.Scatter(
+              x=analogs_ts.time,
+              y=analogs_ts.data[chosen_analog],
+              mode="lines",
+              line=dict(color="#f59e0b", width=1.5),
+              name=chosen_analog,
+          )
+      )
+
+    fig_as1_analog.update_layout(
+        title=f"Raw Analog Signal: {chosen_analog}",
+        xaxis_title="Time (s)",
+        yaxis_title="Raw ADC Voltage / Bits (Uncalibrated)",
+        template="plotly_dark",
+        hovermode="x unified",
+        margin=dict(l=20, r=20, t=40, b=20),
+    )
+    st.plotly_chart(fig_as1_analog, use_container_width=True)
+
+    with st.expander("💡 Assignment Helper: Part B Questions"):
+      st.markdown(
+          f"""
+            * **Explain what you have plotted:** 
+              You plotted `{chosen_analog}` directly from `c3d["Analogs"]`. This is the raw transducer electrical signal (voltage or digital counts) recorded directly from the force plate amplifier before calibration matrices, scale factors, or baseline offsets are applied.
+            * **Does it make sense?**
+              * Is there a steady non-zero baseline during unloaded intervals?
+              * Are there noticeable deflection spikes during foot strikes?
+              * Is high-frequency electrical noise visible along the baseline?
+            """
+      )
+
+    st.markdown("---")
+
+    # --- Part C: Standalone Code for PDF Submission ---
+    st.markdown("#### Assignment Submission: Standalone Python Code")
+    st.caption(
+        "Copy and run this script locally to generate figures for your single"
+        " PDF submission."
+    )
+
+    c3d_path_for_script = st.session_state.get(
+        "c3d_file_path", "your_trial_file.c3d"
+    )
+    standalone_code = f"""import kineticstoolkit.lab as ktk
+import matplotlib.pyplot as plt
+
+# Load C3D File
+c3d = ktk.read_c3d(r"{c3d_path_for_script}")
+
+# -------------------------------------------------------------
+# Part A: Two Trajectory Points (Points)
+# -------------------------------------------------------------
+points = c3d["Points"]
+p1 = "{marker1}"
+p2 = "{marker2}"
+
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+
+# Plot Marker 1
+ax1.plot(points.time, points.data[p1][:, 0], label=f"{{p1}} X (M-L)", color="red")
+ax1.plot(points.time, points.data[p1][:, 1], label=f"{{p1}} Y (A-P)", color="green")
+ax1.plot(points.time, points.data[p1][:, 2], label=f"{{p1}} Z (Vertical)", color="blue")
+ax1.set_title(f"Full Trial Trajectory: {{p1}}")
+ax1.set_ylabel("Position (m)")
+ax1.grid(True)
+ax1.legend()
+
+# Plot Marker 2
+ax2.plot(points.time, points.data[p2][:, 0], label=f"{{p2}} X (M-L)", color="red", linestyle="--")
+ax2.plot(points.time, points.data[p2][:, 1], label=f"{{p2}} Y (A-P)", color="green", linestyle="--")
+ax2.plot(points.time, points.data[p2][:, 2], label=f"{{p2}} Z (Vertical)", color="blue", linestyle="--")
+ax2.set_title(f"Full Trial Trajectory: {{p2}}")
+ax2.set_xlabel("Time (s)")
+ax2.set_ylabel("Position (m)")
+ax2.grid(True)
+ax2.legend()
+plt.tight_layout()
+plt.savefig("assignment1_partA_markers.png", dpi=300)
+plt.show()
+
+# -------------------------------------------------------------
+# Part B: Raw Vertical Force Channel (Analogs)
+# -------------------------------------------------------------
+analogs = c3d["Analogs"]
+ch_name = "{chosen_analog}"
+
+plt.figure(figsize=(10, 4))
+plt.plot(analogs.time, analogs.data[ch_name], color="orange", label=f"Raw Analog: {{ch_name}}")
+plt.title(f"Raw Vertical Force Component: {{ch_name}}")
+plt.xlabel("Time (s)")
+plt.ylabel("Analog Output (Volts / Counts)")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.savefig("assignment1_partB_analog.png", dpi=300)
+plt.show()
+"""
+    st.code(standalone_code, language="python")
+    st.download_button(
+        label="💾 Download Assignment 1 Script (.py)",
+        data=standalone_code,
+        file_name="assignment1_code.py",
+        mime="text/x-python",
+    )
+
+  # =========================================================================
+  # STEP 1: KINEMATICS & GAIT CYCLE IDENTIFICATION
+  # =========================================================================
+  with active_tabs[1]:
     st.subheader("Step 1: Identify and Isolate One Gait Cycle")
     st.caption(
         "Inspect sagittal kinematics. Drag a box across one gait cycle (heel"
@@ -685,8 +1171,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           value=st.session_state.get("cycle_locked", False),
       )
 
-    import plotly.graph_objects as go
-
     fig_kin = go.Figure()
     fig_kin.add_trace(
         go.Scatter(
@@ -712,7 +1196,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         annotation_position="top left",
     )
 
-    # Determine x-axis zoom range
     x_axis_range = (
         [t_curr_s - 0.05, t_curr_e + 0.05]
         if zoom_to_window
@@ -811,24 +1294,22 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           f"Cycle locked: {st.session_state['t_start']:.3f}s to"
           f" {st.session_state['t_end']:.3f}s. Proceed to Step 2 above."
       )
-      
- # =========================================================================
+
+  # =========================================================================
   # STEP 2: GRF DECISIONS (INDEPENDENT FP1 & FP2 ZEROING)
   # =========================================================================
-  if st.session_state.get("cycle_locked", False) and len(active_tabs) > 1:
-    with active_tabs[1]:
+  if st.session_state.get("cycle_locked", False) and len(active_tabs) > 2:
+    with active_tabs[2]:
       st.subheader("Step 2: Ground Reaction Force (GRF) Processing Decisions")
       st.caption(
           "Configure baseline zeroing and filtering for each force plate"
           " independently."
       )
 
-      angles_ts = st.session_state["angles"]
       k_t_start = float(angles_ts.time[0])
       k_t_end = float(angles_ts.time[-1])
       kin_duration = k_t_end - k_t_start
 
-      # Initialize independent baseline defaults if not already present
       for p_name, def_start, def_end in [
           ("FP1", k_t_start + 0.2, k_t_start + 0.6),
           ("FP2", k_t_start + 1.0, k_t_start + 1.4),
@@ -903,9 +1384,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           cutoff_fc = None
           st.caption("Displaying unfiltered raw signals.")
 
-      # Process data for the active plate
-      import copy
-
       raw_plate_ts = (
           st.session_state["FP1_raw"]
           if plate_choice == "FP1"
@@ -914,7 +1392,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       fp_working = copy.deepcopy(raw_plate_ts)
       n_total_fp = len(fp_working.time)
 
-      # Independent Zeroing Calculation
       if st.session_state[f"{plate_choice}_debias"]:
         b_s = st.session_state[f"{plate_choice}_b_start"]
         b_e = st.session_state[f"{plate_choice}_b_end"]
@@ -930,7 +1407,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           )
           fp_working.data[k] -= baseline_offset
 
-      # Slice strictly to the locked gait cycle window
       user_t_start = float(st.session_state["t_start"])
       user_t_end = float(st.session_state["t_end"])
 
@@ -952,7 +1428,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             fp_working.data[k][c_idx_start:c_idx_end]
         )
 
-      # Optional filtering
       cycle_fp_filt = None
       if filter_mode == "Butterworth Low-pass" and cutoff_fc is not None:
         cycle_fp_filt = ktk.filters.butter(cycle_fp_raw, fc=cutoff_fc)
@@ -964,8 +1439,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           ("Y (A-P)", f"F{p}Y", "#22c55e"),
           ("Z (Vertical)", f"F{p}Z", "#3b82f6"),
       ]
-
-      import plotly.graph_objects as go
 
       fig_grf = go.Figure()
       is_debiased = st.session_state[f"{plate_choice}_debias"]
@@ -1028,12 +1501,12 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         st.session_state["filter_locked"] = True
         st.success("Decisions saved! Step 3 (COP Analysis) is now unlocked.")
         st.rerun()
-        
+
   # =========================================================================
   # STEP 3: COP & BUTTERFLY PLOT
   # =========================================================================
-  if st.session_state.get("filter_locked", False) and len(active_tabs) > 2:
-    with active_tabs[2]:
+  if st.session_state.get("filter_locked", False) and len(active_tabs) > 3:
+    with active_tabs[3]:
       st.subheader("Step 3: Center of Pressure (COP) Analysis")
       chosen_plate = st.session_state.get("chosen_plate", "FP1")
       fc_val = st.session_state.get("chosen_fc", 100)
