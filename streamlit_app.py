@@ -5,21 +5,22 @@ Created on Mon Sep 14 15:10:00 2026
 
 @author: sgrenier
 """
-import json
-import tempfile
 import copy
 import io
+import json
+import os
 from pathlib import Path
+import tempfile
+from inverse_dynamics_final2 import compute_inverse_dynamics
+import kineticstoolkit.lab as ktk
+import matplotlib.pyplot as plt
+import numpy as np
+import plotly.graph_objects as go
+from scipy.spatial.transform import Rotation as R
 import streamlit as st
 import streamlit.components.v1 as components
-import kineticstoolkit.lab as ktk
-import plotly.graph_objects as go
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.spatial.transform import Rotation as R
 
-from inverse_dynamics_final2 import compute_inverse_dynamics
-#from COP_final2 import FP1_filtered, FP2_filtered
+# from COP_final2 import FP1_filtered, FP2_filtered
 
 
 INTERCONNECTIONS = {
@@ -46,161 +47,105 @@ INTERCONNECTIONS = {
     },
 }
 
+
 def process_cop(c3d_file_path: str):
-    """Processes COP and force plate data dynamically from the uploaded C3D file."""
-    # Reads the exact temporary file created by the uploader
-    c3d_data = ktk.read_c3d(str(c3d_file_path))
-    markers = c3d_data["Points"]
-    force = c3d_data["Analogs"]
+  """Processes COP and force plate data dynamically from the uploaded C3D file."""
+  c3d_data = ktk.read_c3d(str(c3d_file_path))
+  markers = c3d_data["Points"]
+  force = c3d_data["Analogs"]
 
-   #force.data #you can list it here and see what exactly is in the variable for plotting or other manipulation
-   #X = MedioLateral direction, Right +ve
-   #Y = Antero-posterior, Forward +ve
-   #Z = Up-Down, Up +ve
-   #right Hand System
+  # Sampling frequency
+  ForceSF = 1200  # Hz
+  num_samples = len(
+      force.data["F1X"]
+  )  # Assuming all channels have the same length
+  time = np.arange(
+      0, num_samples / ForceSF, 1 / ForceSF
+  )  # Creates time values at 1200Hz
+  force.data["Time"] = time
 
-   # Sampling frequency
-    ForceSF = 1200  # Hz
-   # Number of samples (assumed from force data)
-    num_samples = len(force.data["F1X"])  # Assuming all channels have the same length
-   # Generate time array
-    time = np.arange(0, num_samples / ForceSF, 1 / ForceSF)  # Creates time values at 1200Hz
-    force.data["Time"] = time
+  # Scale all numerical data in the TimeSeries by -1000 to Newtons
+  force_to_scale = ["F1X", "F1Y", "F1Z", "F2X", "F2Y", "F2Z"]
+  force.data = {
+      key: (value * -1000 if key in force_to_scale else value)
+      for key, value in force.data.items()
+  }
 
+  # Extract only the selected channels as a new TimeSeries
+  FP1 = force.get_subset(["F1X", "F1Y", "F1Z", "M1X", "M1Y", "M1Z"])
+  FP1_bias = FP1.get_ts_between_times(6.6, 6.9, inclusive=False)
 
-   # Scale all numerical data in the TimeSeries by 1000
-   # Define the keys that need to be scaled
-    force_to_scale = ["F1X", "F1Y", "F1Z", "F2X", "F2Y", "F2Z"]
-   # Apply scaling only to the specified keys
-    force.data = {key: (value * -1000 if key in force_to_scale else value) for key, value in force.data.items()}
+  FP2 = force.get_subset(["F2X", "F2Y", "F2Z", "M2X", "M2Y", "M2Z"])
+  FP2_bias = FP2.get_ts_between_times(14.0, 14.25, inclusive=False)
 
-   # Moments_to_scale = ["M1X", "M1Y", "M1Z", "M2X", "M2Y", "M2Z"]
-   # # Apply scaling only to the specified keys
-   # force.data = {key: (value * 0.0001 if key in Moments_to_scale else value) for key, value in force.data.items()}
+  # De-bias each channel in the force data Force plate 1
+  for channel in FP1.data.keys():
+    FP1.data[channel] -= np.mean(FP1_bias.data[channel])
 
-   # #reshape the force for proper calibration
-   # # Extract force & moment components for each force plate
-   # F1 = np.vstack([
-   #     force.data["F1X"], force.data["F1Y"], force.data["F1Z"], 
-   #     force.data["M1X"], force.data["M1Y"], force.data["M1Z"]
-   # ]).T  # Shape: (72000, 6)
+  # De-bias each channel in the force data Force plate 2
+  for channel in FP2.data.keys():
+    FP2.data[channel] -= np.mean(FP2_bias.data[channel])
 
-   # F2 = np.vstack([
-   #     force.data["F2X"], force.data["F2Y"], force.data["F2Z"], 
-   #     force.data["M2X"], force.data["M2Y"], force.data["M2Z"]
-   # ]).T  # Shape: (72000, 6)
+  FP1_filtered = ktk.filters.butter(FP1, fc=20)
+  FP2_filtered = ktk.filters.butter(FP2, fc=20)
 
-   # # Stack both force plates into a single array
-   # raw_forces = np.stack([F1, F2], axis=-1)  # Shape: (72000, 6, 2)
-
-   # print("Reconstructed force data shape:", raw_forces.shape)
-
-   # # Add the directory where readMATfiles.py is located
-   # sys.path.append(os.path.abspath("/home/sgrenier/.config/spyder-py3/"))  # Update this path
-   # from readMATfiles import ForcePlatformCalibration  # Adjust the filename to match your Python module
-   # print("Calibration matrix loaded from external file:", ForcePlatformCalibration.shape)
-
-   # # Create an empty array for calibrated forces
-   # calibrated_forces = np.zeros_like(raw_forces)  # Same shape: (72000, 6, 2)
-
-   # # Apply calibration separately for each force plate
-   # for plate_idx in range(2):  # Iterate over two force plates
-   #     calibrated_forces[:, :, plate_idx] = np.matmul(
-   #         raw_forces[:, :, plate_idx],  # Raw force data
-   #         ForcePlatformCalibration[:, :, plate_idx].T  # Transposed calibration matrix
-   #     )
-
-
-   #get the baseline data & assign to bias
-   # Extract specific channels into a new dictionary
-   # Extract only the selected channels as a new TimeSeries
-    FP1 = force.get_subset(["F1X", "F1Y", "F1Z", "M1X", "M1Y", "M1Z"])
-    FP1_bias = FP1.get_ts_between_times(6.6, 6.9, inclusive=False)
-   #FP1.plot()
-
-    FP2 = force.get_subset(["F2X", "F2Y", "F2Z", "M2X", "M2Y", "M2Z"])
-    FP2_bias = FP2.get_ts_between_times(14.0, 14.25, inclusive=False)
-   #FP2.plot()
-
-   # De-bias each channel in the force data Force plate 1
-    for channel in FP1.data.keys():    
-       # Subtract the baseline mean from the entire channel
-        FP1.data[channel] -= np.mean(FP1_bias.data[channel])
-       
-   # De-bias each channel in the force data Force plate 2
-    for channel in FP2.data.keys():    
-       # Subtract the baseline mean from the entire channel
-        FP2.data[channel] -= np.mean(FP2_bias.data[channel])    
-
-    FP1_filtered = ktk.filters.butter(FP1, fc=20)
-    FP2_filtered = ktk.filters.butter(FP2, fc=20)
-
-    return FP1, FP2, FP1_filtered, FP2_filtered
+  return FP1, FP2, FP1_filtered, FP2_filtered
 
 
 def transform_to_omega(angles_ts, omega_raw_ts, sequence="XYZ"):
-    time = omega_raw_ts.time
-    omega_transformed = ktk.TimeSeries(time=time, data={})
+  time = omega_raw_ts.time
+  omega_transformed = ktk.TimeSeries(time=time, data={})
 
-    for joint_name in omega_raw_ts.data.keys():
-        angles = np.radians(angles_ts.data[joint_name][:-1])
-        omega_raw = np.radians(omega_raw_ts.data[joint_name])
-        R_matrices = R.from_euler(sequence, angles, degrees=False).as_matrix()
+  for joint_name in omega_raw_ts.data.keys():
+    angles = np.radians(angles_ts.data[joint_name][:-1])
+    omega_raw = np.radians(omega_raw_ts.data[joint_name])
+    R_matrices = R.from_euler(sequence, angles, degrees=False).as_matrix()
 
-        omega_corrected = np.zeros_like(angles)
-        for i in range(len(angles)):
-            R_i = R_matrices[i]
-            omega_corrected[i] = R_i @ omega_raw[i]
+    omega_corrected = np.zeros_like(angles)
+    for i in range(len(angles)):
+      R_i = R_matrices[i]
+      omega_corrected[i] = R_i @ omega_raw[i]
 
-        omega_transformed.data[joint_name] = omega_corrected
+    omega_transformed.data[joint_name] = omega_corrected
 
-    return omega_transformed
+  return omega_transformed
 
 
 def build_threejs_standalone_viewer(markers, interconnections, step=2):
-    """
-    Builds a completely self-contained WebGL 3D player.
-    All orbit, zoom, scrubbing, and playback run client-side with 0 page reloads.
-    """
-    times = markers.time[::step].tolist()
-    n_frames = len(times)
+  times = markers.time[::step].tolist()
+  n_frames = len(times)
 
-    # Determine coordinate scale (convert mm to m if values > 50)
-    all_pts = []
-    for m in markers.data.values():
-        all_pts.append(m[::step, :3])
-    stacked = np.concatenate(all_pts, axis=0)
-    scale = 0.001 if float(np.nanmax(np.abs(stacked))) > 50.0 else 1.0
+  all_pts = []
+  for m in markers.data.values():
+    all_pts.append(m[::step, :3])
+  stacked = np.concatenate(all_pts, axis=0)
+  scale = 0.001 if float(np.nanmax(np.abs(stacked))) > 50.0 else 1.0
 
-    # Calculate center of subject
-    center_x = float(np.nanmean(stacked[:, 0]) * scale)
-    center_y = float(np.nanmean(stacked[:, 1]) * scale)
-    center_z = float(np.nanmean(stacked[:, 2]) * scale)
+  center_x = float(np.nanmean(stacked[:, 0]) * scale)
+  center_y = float(np.nanmean(stacked[:, 1]) * scale)
+  center_z = float(np.nanmean(stacked[:, 2]) * scale)
 
-    # Map links
-    segments = []
-    for group_name, info in interconnections.items():
-        color = info.get("Color", "#00ffff")
-        for link in info["Links"]:
-            segments.append({"color": color, "markers": link})
+  segments = []
+  for group_name, info in interconnections.items():
+    color = info.get("Color", "#00ffff")
+    for link in info["Links"]:
+      segments.append({"color": color, "markers": link})
 
-    # Prepare marker coordinate tables
-    marker_dict = {}
-    for m_name, m_data in markers.data.items():
-        downsampled = m_data[::step, :3] * scale
-        cleaned = np.where(np.isnan(downsampled), None, np.round(downsampled, 4))
-        marker_dict[m_name] = cleaned.tolist()
+  marker_dict = {}
+  for m_name, m_data in markers.data.items():
+    downsampled = m_data[::step, :3] * scale
+    cleaned = np.where(np.isnan(downsampled), None, np.round(downsampled, 4))
+    marker_dict[m_name] = cleaned.tolist()
 
-    # Three.js Coordinate Map: X=X (M-L), Y=Z (Up), Z=-Y (A-P)
-    data_payload = json.dumps({
-        "times": times,
-        "n_frames": n_frames,
-        "segments": segments,
-        "markers": marker_dict,
-        "center": [center_x, center_z, -center_y]
-    })
+  data_payload = json.dumps({
+      "times": times,
+      "n_frames": n_frames,
+      "segments": segments,
+      "markers": marker_dict,
+      "center": [center_x, center_z, -center_y],
+  })
 
-    html_code = f"""<!DOCTYPE html>
+  html_code = f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -294,13 +239,11 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
 
-    // Floor grid & subtle coordinate lights
     const grid = new THREE.GridHelper(3.0, 15, 0x334155, 0x1e293b);
     grid.position.set(cx, 0, cz);
     scene.add(grid);
     scene.add(new THREE.AmbientLight(0xffffff, 1.0));
 
-    // Construct Segment Mesh Lines & Joint Spheres
     const lineObjects = [];
     const jointSpheres = [];
 
@@ -323,7 +266,6 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
     }});
 
     function updatePose(fIdx) {{
-      // Update Skeleton Lines
       lineObjects.forEach(obj => {{
         const posAttr = obj.line.geometry.attributes.position;
         const arr = posAttr.array;
@@ -341,7 +283,6 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
         posAttr.needsUpdate = true;
       }});
 
-      // Update Joint Points
       jointSpheres.forEach(obj => {{
         const pt = data.markers[obj.marker] ? data.markers[obj.marker][fIdx] : null;
         if (pt && pt[0] !== null) {{
@@ -357,7 +298,6 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
       document.getElementById('readout').textContent = `${{t}}s | ${{fIdx}}`;
     }}
 
-    // Preset helper (preserves target center)
     window.setPreset = function(type) {{
       const dist = 2.4;
       if (type === 'side') camera.position.set(cx + dist, cy, cz);
@@ -367,7 +307,6 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
       controls.target.set(cx, cy, cz);
     }};
 
-    // Playback loop
     let isPlaying = false;
     let currentFrameFloat = 0;
     let lastTime = performance.now();
@@ -417,368 +356,194 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
   </script>
 </body>
 </html>"""
-    return html_code
+  return html_code
 
 
-def run_segment_kinematics(c3d_file_path: str, mass_total: float, height_total: float):
-    markers = ktk.read_c3d(c3d_file_path)["Points"]
-    markers = ktk.filters.butter(markers, fc=6)
+def run_segment_kinematics(
+    c3d_file_path: str, mass_total: float, height_total: float
+):
+  markers = ktk.read_c3d(c3d_file_path)["Points"]
+  markers = ktk.filters.butter(markers, fc=6)
 
+  raw_analogs = ktk.read_c3d(c3d_file_path)["Analogs"]
 
-    raw_analogs = ktk.read_c3d(c3d_file_path)["Analogs"]  # Completely raw, un-debiased
-    
-    # Align analog time origin to kinematic marker time
-    t0_kinematics = float(markers.time[0])
-    t0_analog = float(raw_analogs.time[0])
-    time_offset = t0_kinematics - t0_analog
-  
-    fplate = ktk.read_c3d(c3d_file_path)["ForcePlatforms"]
-    fplate.resample(120, kind="linear", in_place=True)
-    fplate = ktk.filters.median(fplate, window_length=5)
+  t0_kinematics = float(markers.time[0])
+  t0_analog = float(raw_analogs.time[0])
+  time_offset = t0_kinematics - t0_analog
 
-    frames = ktk.TimeSeries(time=markers.time)
-    joint_positions = ktk.TimeSeries(time=markers.time)
+  fplate = ktk.read_c3d(c3d_file_path)["ForcePlatforms"]
+  fplate.resample(120, kind="linear", in_place=True)
+  fplate = ktk.filters.median(fplate, window_length=5)
 
-    pelvis_origin = markers.data["SACR"]
-    y_vec = (0.5 * (markers.data["RASI"] + markers.data["LASI"])) - pelvis_origin
-    xy_vec = markers.data["RASI"] - pelvis_origin
-    frames.data["Pelvis"] = ktk.geometry.create_transform_series(positions=pelvis_origin, y=y_vec, xy=xy_vec)
-    joint_positions.data["Pelvis"] = pelvis_origin
+  frames = ktk.TimeSeries(time=markers.time)
+  joint_positions = ktk.TimeSeries(time=markers.time)
 
-    LtHip_Origin = 0.5 * (markers.data["LGTR"] + markers.data["LASI"])
-    z_vec_lt = LtHip_Origin - (0.5 * (markers.data["LLEP"] + markers.data["LMEP"]))
-    xz_vec_lt = markers.data["LMEP"] - markers.data["LLEP"]
-    frames.data["ThighL"] = ktk.geometry.create_transform_series(positions=LtHip_Origin, z=z_vec_lt, xz=xz_vec_lt)
-    joint_positions.data["HipL"] = LtHip_Origin
+  pelvis_origin = markers.data["SACR"]
+  y_vec = (0.5 * (markers.data["RASI"] + markers.data["LASI"])) - pelvis_origin
+  xy_vec = markers.data["RASI"] - pelvis_origin
+  frames.data["Pelvis"] = ktk.geometry.create_transform_series(
+      positions=pelvis_origin, y=y_vec, xy=xy_vec
+  )
+  joint_positions.data["Pelvis"] = pelvis_origin
 
-    RtHip_Origin = 0.5 * (markers.data["RGTR"] + markers.data["RASI"])
-    z_vec_rt = RtHip_Origin - (0.5 * (markers.data["RLEP"] + markers.data["RMEP"]))
-    xz_vec_rt = markers.data["RLEP"] - markers.data["RMEP"]
-    frames.data["ThighR"] = ktk.geometry.create_transform_series(positions=RtHip_Origin, z=z_vec_rt, xz=xz_vec_rt)
-    joint_positions.data["HipR"] = RtHip_Origin
+  LtHip_Origin = 0.5 * (markers.data["LGTR"] + markers.data["LASI"])
+  z_vec_lt = LtHip_Origin - (0.5 * (markers.data["LLEP"] + markers.data["LMEP"]))
+  xz_vec_lt = markers.data["LMEP"] - markers.data["LLEP"]
+  frames.data["ThighL"] = ktk.geometry.create_transform_series(
+      positions=LtHip_Origin, z=z_vec_lt, xz=xz_vec_lt
+  )
+  joint_positions.data["HipL"] = LtHip_Origin
 
-    LtShk_origin = 0.5 * (markers.data["LLEP"] + markers.data["LMEP"])
-    z_vec_lshk = LtShk_origin - 0.5 * (markers.data["LMML"] + markers.data["LLML"])
-    yz_vec_lshk = markers.data["LSH2"] - markers.data["LSH3"]
-    frames.data["ShankL"] = ktk.geometry.create_transform_series(positions=LtShk_origin, z=z_vec_lshk, yz=yz_vec_lshk)
-    joint_positions.data["KneeL"] = LtShk_origin
+  RtHip_Origin = 0.5 * (markers.data["RGTR"] + markers.data["RASI"])
+  z_vec_rt = RtHip_Origin - (0.5 * (markers.data["RLEP"] + markers.data["RMEP"]))
+  xz_vec_rt = markers.data["RLEP"] - markers.data["RMEP"]
+  frames.data["ThighR"] = ktk.geometry.create_transform_series(
+      positions=RtHip_Origin, z=z_vec_rt, xz=xz_vec_rt
+  )
+  joint_positions.data["HipR"] = RtHip_Origin
 
-    RtShk_origin = 0.5 * (markers.data["RLEP"] + markers.data["RMEP"])
-    z_vec_rshk = RtShk_origin - 0.5 * (markers.data["RMML"] + markers.data["RLML"])
-    yz_vec_rshk = markers.data["RSH3"] - markers.data["RSH2"]
-    frames.data["ShankR"] = ktk.geometry.create_transform_series(positions=RtShk_origin, z=z_vec_rshk, yz=yz_vec_rshk)
-    joint_positions.data["KneeR"] = RtShk_origin
+  LtShk_origin = 0.5 * (markers.data["LLEP"] + markers.data["LMEP"])
+  z_vec_lshk = LtShk_origin - 0.5 * (
+      markers.data["LMML"] + markers.data["LLML"]
+  )
+  yz_vec_lshk = markers.data["LSH2"] - markers.data["LSH3"]
+  frames.data["ShankL"] = ktk.geometry.create_transform_series(
+      positions=LtShk_origin, z=z_vec_lshk, yz=yz_vec_lshk
+  )
+  joint_positions.data["KneeL"] = LtShk_origin
 
-    LtFoot_origin = 0.5 * (markers.data["LMML"] + markers.data["LLML"])
-    y_vec_lft = markers.data["L5TH"] - LtFoot_origin
-    xy_vec_lft = markers.data["LMML"] - LtFoot_origin
-    frames.data["FootL"] = ktk.geometry.create_transform_series(positions=LtFoot_origin, y=y_vec_lft, xy=xy_vec_lft)
-    joint_positions.data["AnkleL"] = LtFoot_origin
+  RtShk_origin = 0.5 * (markers.data["RLEP"] + markers.data["RMEP"])
+  z_vec_rshk = RtShk_origin - 0.5 * (
+      markers.data["RMML"] + markers.data["RLML"]
+  )
+  yz_vec_rshk = markers.data["RSH3"] - markers.data["RSH2"]
+  frames.data["ShankR"] = ktk.geometry.create_transform_series(
+      positions=RtShk_origin, z=z_vec_rshk, yz=yz_vec_rshk
+  )
+  joint_positions.data["KneeR"] = RtShk_origin
 
-    RtFoot_origin = 0.5 * (markers.data["RMML"] + markers.data["RLML"])
-    y_vec_rft = markers.data["R5TH"] - RtFoot_origin
-    xy_vec_rft = markers.data["RLML"] - RtFoot_origin
-    frames.data["FootR"] = ktk.geometry.create_transform_series(positions=RtFoot_origin, y=y_vec_rft, xy=xy_vec_rft)
-    joint_positions.data["AnkleR"] = RtFoot_origin
+  LtFoot_origin = 0.5 * (markers.data["LMML"] + markers.data["LLML"])
+  y_vec_lft = markers.data["L5TH"] - LtFoot_origin
+  xy_vec_lft = markers.data["LMML"] - LtFoot_origin
+  frames.data["FootL"] = ktk.geometry.create_transform_series(
+      positions=LtFoot_origin, y=y_vec_lft, xy=xy_vec_lft
+  )
+  joint_positions.data["AnkleL"] = LtFoot_origin
 
-    Pelvis_to_ThighL_LCS = ktk.geometry.get_local_coordinates(frames.data["ThighL"], frames.data["Pelvis"])
-    Pelvis_to_ThighR_LCS = ktk.geometry.get_local_coordinates(frames.data["ThighR"], frames.data["Pelvis"])
-    ThighL_to_ShankL_LCS = ktk.geometry.get_local_coordinates(frames.data["ShankL"], frames.data["ThighL"])
-    ThighR_to_ShankR_LCS = ktk.geometry.get_local_coordinates(frames.data["ShankR"], frames.data["ThighR"])
-    ShankL_to_FootL_LCS = ktk.geometry.get_local_coordinates(frames.data["FootL"], frames.data["ShankL"])
-    ShankR_to_FootR_LCS = ktk.geometry.get_local_coordinates(frames.data["FootR"], frames.data["ShankR"])
+  RtFoot_origin = 0.5 * (markers.data["RMML"] + markers.data["RLML"])
+  y_vec_rft = markers.data["R5TH"] - RtFoot_origin
+  xy_vec_rft = markers.data["RLML"] - RtFoot_origin
+  frames.data["FootR"] = ktk.geometry.create_transform_series(
+      positions=RtFoot_origin, y=y_vec_rft, xy=xy_vec_rft
+  )
+  joint_positions.data["AnkleR"] = RtFoot_origin
 
-    angles = ktk.TimeSeries(time=markers.time)
-    angles.data["HipL"] = ktk.geometry.get_angles(Pelvis_to_ThighL_LCS, "XZY", degrees=True)
-    angles.data["HipR"] = ktk.geometry.get_angles(Pelvis_to_ThighR_LCS, "XZY", degrees=True)
-    angles.data["KneeL"] = ktk.geometry.get_angles(ThighL_to_ShankL_LCS, "XZY", degrees=True)
-    angles.data["KneeR"] = ktk.geometry.get_angles(ThighR_to_ShankR_LCS, "XZY", degrees=True)
-    angles.data["AnkleL"] = ktk.geometry.get_angles(ShankL_to_FootL_LCS, "XYZ", degrees=True)
-    angles.data["AnkleR"] = ktk.geometry.get_angles(ShankR_to_FootR_LCS, "XYZ", degrees=True)
-
-    com_positions = ktk.TimeSeries(time=markers.time)
-    com_positions.data["Pelvis_CoM"] = LtHip_Origin + 0.5 * (RtHip_Origin - LtHip_Origin)
-    com_positions.data["ThighL_CoM"] = LtHip_Origin + (0.433 * (LtShk_origin - LtHip_Origin))
-    com_positions.data["ThighR_CoM"] = RtHip_Origin - (0.433 * (RtShk_origin - RtHip_Origin))
-    com_positions.data["ShankL_CoM"] = LtShk_origin + (0.433 * (LtFoot_origin - LtShk_origin))
-    com_positions.data["ShankR_CoM"] = RtShk_origin + (0.433 * (RtFoot_origin - RtShk_origin))
-    com_positions.data["FootL_CoM"] = LtFoot_origin + (0.5 * (markers.data["L5TH"] - LtFoot_origin))
-    com_positions.data["FootR_CoM"] = RtFoot_origin + (0.5 * (markers.data["R5TH"] - RtFoot_origin))
-
-    com_velocities = ktk.filters.deriv(com_positions)
-    com_accelerations = ktk.filters.deriv(com_velocities)
-
-    omega_raw = ktk.filters.deriv(angles)
-    omega = transform_to_omega(angles, omega_raw)
-    omega_filt = ktk.filters.butter(omega, fc=5)
-    alpha = ktk.filters.deriv(omega_filt)
-
-    FP1,FP2, FP1_filtered, FP2_filtered = process_cop(c3d_file_path)
-    fp1 = FP1_filtered.copy()
-    fp2 = FP2_filtered.copy()
-    fp1.resample(120, kind="linear", in_place=True)
-    fp2.resample(120, kind="linear", in_place=True)
-    
-# -----------------------------------------------------------------
-    # Shift time vectors so ALL analog/force objects match marker time
-    # -----------------------------------------------------------------
-    t0_target = float(markers.time[0])
-    for ts_obj in [raw_analogs, fplate, FP1, fp1, FP2, fp2]:  # <-- Added fplate
-      if ts_obj is not None:
-        shift = t0_target - float(ts_obj.time[0])
-        if abs(shift) > 1e-4:
-          ts_obj.time = ts_obj.time + shift
-
-    results = compute_inverse_dynamics(
-        omega,
-        alpha,
-        com_accelerations,
-        joint_positions,
-        com_positions,
-        fplate,
-        mass_total,
-        height_total,
-        FP1_filtered=fp1,
-        FP2_filtered=fp2,
-    )
-
-    # Re-verify alignment right before returning
-    for ts_obj in [raw_analogs, fplate, FP1, fp1, FP2, fp2]:  # <-- Added fplate
-      if ts_obj is not None:
-        shift = t0_target - float(ts_obj.time[0])
-        if abs(shift) > 1e-4:
-          ts_obj.time = ts_obj.time + shift
-
-    return markers, angles, results, FP1, fp1, FP2, fp2, raw_analogs
-
-def render_assignment_1(c3d_file_path: str):
-  st.header("Assignment 1: Exploring Raw Kinematic & Kinetic Signals")
-  st.markdown(
-      """
-    In this assignment, you will inspect raw uncalibrated signals directly from the C3D file:
-    * **Part A:** Select two tracking markers from `Points` and examine their 3D coordinates over time.
-    * **Part B:** Select a vertical force channel from `Analogs` and analyze the raw signal behavior.
-    """
+  Pelvis_to_ThighL_LCS = ktk.geometry.get_local_coordinates(
+      frames.data["ThighL"], frames.data["Pelvis"]
+  )
+  Pelvis_to_ThighR_LCS = ktk.geometry.get_local_coordinates(
+      frames.data["ThighR"], frames.data["Pelvis"]
+  )
+  ThighL_to_ShankL_LCS = ktk.geometry.get_local_coordinates(
+      frames.data["ShankL"], frames.data["ThighL"]
+  )
+  ThighR_to_ShankR_LCS = ktk.geometry.get_local_coordinates(
+      frames.data["ShankR"], frames.data["ThighR"]
+  )
+  ShankL_to_FootL_LCS = ktk.geometry.get_local_coordinates(
+      frames.data["FootL"], frames.data["ShankL"]
+  )
+  ShankR_to_FootR_LCS = ktk.geometry.get_local_coordinates(
+      frames.data["FootR"], frames.data["ShankR"]
   )
 
-  # Read C3D contents directly
-  c3d_raw = ktk.read_c3d(c3d_file_path)
-  points_ts = c3d_raw["Points"]
-  analogs_ts = c3d_raw["Analogs"]
-
-  available_markers = list(points_ts.data.keys())
-  available_analogs = list(analogs_ts.data.keys())
-
-  st.markdown("---")
-  st.subheader("Part A: 3D Trajectories of Two Markers (`Points`)")
-
-  col_m1, col_m2 = st.columns(2)
-  with col_m1:
-    marker1 = st.selectbox(
-        "Select First Marker:",
-        available_markers,
-        index=0 if available_markers else None,
-        key="as1_m1",
-    )
-  with col_m2:
-    # Default to a second marker if available
-    def_idx2 = 1 if len(available_markers) > 1 else 0
-    marker2 = st.selectbox(
-        "Select Second Marker:",
-        available_markers,
-        index=def_idx2,
-        key="as1_m2",
-    )
-
-  # Plot Marker Trajectories
-  fig_markers = go.Figure()
-  colors = ["#3b82f6", "#22c55e", "#ef4444"]
-  axis_labels = ["X (M-L)", "Y (A-P)", "Z (Vertical)"]
-
-  # Plot Marker 1
-  if marker1 in points_ts.data:
-    for i in range(3):
-      fig_markers.add_trace(
-          go.Scatter(
-              x=points_ts.time,
-              y=points_ts.data[marker1][:, i],
-              mode="lines",
-              name=f"{marker1} - {axis_labels[i]}",
-              line=dict(color=colors[i], width=2),
-          )
-      )
-
-  # Plot Marker 2
-  if marker2 in points_ts.data:
-    for i in range(3):
-      fig_markers.add_trace(
-          go.Scatter(
-              x=points_ts.time,
-              y=points_ts.data[marker2][:, i],
-              mode="lines",
-              name=f"{marker2} - {axis_labels[i]}",
-              line=dict(color=colors[i], dash="dash", width=2),
-          )
-      )
-
-  fig_markers.update_layout(
-      title=f"Full Trial Trajectories: {marker1} (Solid) vs. {marker2} (Dashed)",
-      xaxis_title="Time (s)",
-      yaxis_title="Position (m or mm)",
-      template="plotly_dark",
-      hovermode="x unified",
-      margin=dict(l=20, r=20, t=40, b=20),
+  angles = ktk.TimeSeries(time=markers.time)
+  angles.data["HipL"] = ktk.geometry.get_angles(
+      Pelvis_to_ThighL_LCS, "XZY", degrees=True
   )
-  st.plotly_chart(fig_markers, use_container_width=True)
-
-  # Student Reflection Prompt for Part A
-  with st.expander("📝 Lab Question: Part A Interpretation Guide"):
-    st.markdown(
-        f"""
-        * **What points do you believe `{marker1}` and `{marker2}` are?** 
-          *(Hint: Look at the standard marker set naming convention, e.g., RHEE = Right Heel, SACR = Sacrum, RTOE = Right 2nd Metatarsal).*
-        * **What does each line represent?**
-          * **Blue line:** Medio-lateral coordinate (X).
-          * **Green line:** Antero-posterior coordinate (Y) — indicates progression down the walkway.
-          * **Red line:** Vertical height (Z) — observe periodic dips and peaks corresponding to stance and swing.
-        """
-    )
-
-  st.markdown("---")
-  st.subheader("Part B: Vertical Force Component from `Analogs`")
-
-  # Detect common vertical analog channel names (Fz, F3, Channel 3)
-  vertical_candidates = [
-      k
-      for k in available_analogs
-      if "z" in k.lower() or "f3" in k.lower() or "force" in k.lower()
-  ]
-  default_analog = (
-      vertical_candidates[0]
-      if vertical_candidates
-      else (available_analogs[0] if available_analogs else None)
+  angles.data["HipR"] = ktk.geometry.get_angles(
+      Pelvis_to_ThighR_LCS, "XZY", degrees=True
+  )
+  angles.data["KneeL"] = ktk.geometry.get_angles(
+      ThighL_to_ShankL_LCS, "XZY", degrees=True
+  )
+  angles.data["KneeR"] = ktk.geometry.get_angles(
+      ThighR_to_ShankR_LCS, "XZY", degrees=True
+  )
+  angles.data["AnkleL"] = ktk.geometry.get_angles(
+      ShankL_to_FootL_LCS, "XYZ", degrees=True
+  )
+  angles.data["AnkleR"] = ktk.geometry.get_angles(
+      ShankR_to_FootR_LCS, "XYZ", degrees=True
   )
 
-  c_a1, c_a2 = st.columns([2, 1])
-  with c_a1:
-    chosen_analog = st.selectbox(
-        "Select Analog Channel (Raw Vertical Force):",
-        available_analogs,
-        index=(
-            available_analogs.index(default_analog)
-            if default_analog in available_analogs
-            else 0
-        ),
-        key="as1_analog_ch",
-    )
-  with c_a2:
-    st.caption("Raw analog data is sampled at the ADC plate frequency.")
-
-  fig_analog = go.Figure()
-  if chosen_analog in analogs_ts.data:
-    fig_analog.add_trace(
-        go.Scatter(
-            x=analogs_ts.time,
-            y=analogs_ts.data[chosen_analog],
-            mode="lines",
-            line=dict(color="#f59e0b", width=1.5),
-            name=f"Raw Analog: {chosen_analog}",
-        )
-    )
-
-  fig_analog.update_layout(
-      title=f"Raw Analog Signal: {chosen_analog}",
-      xaxis_title="Time (s)",
-      yaxis_title="Analog Output (Volts / Raw Bit Counts)",
-      template="plotly_dark",
-      hovermode="x unified",
-      margin=dict(l=20, r=20, t=40, b=20),
+  com_positions = ktk.TimeSeries(time=markers.time)
+  com_positions.data["Pelvis_CoM"] = LtHip_Origin + 0.5 * (
+      RtHip_Origin - LtHip_Origin
   )
-  st.plotly_chart(fig_analog, use_container_width=True)
-
-  # Student Reflection Prompt for Part B
-  with st.expander("📝 Lab Question: Part B Interpretation Guide"):
-    st.markdown(
-        f"""
-        * **What have you plotted?**
-          You have plotted channel `{chosen_analog}` directly from `c3d["Analogs"]`. This is the raw electrical signal coming from the piezoelectric or strain-gauge transducers prior to coordinate calibration, baseline zeroing, and coordinate system transformation.
-        * **Does it make sense?**
-          * Notice if there is a DC offset during periods where nobody is standing on the plate.
-          * Notice high-frequency electrical noise (50/60 Hz mains humming).
-          * Notice the direction of the deflection during stance: is the vertical load represented as positive or negative voltage?
-        """
-    )
-
-  st.markdown("---")
-  st.subheader("Assignment Submission: Python Code Generator")
-  st.markdown(
-      "Copy the standalone script below to run locally or paste into your final"
-      " assignment PDF."
+  com_positions.data["ThighL_CoM"] = LtHip_Origin + (
+      0.433 * (LtShk_origin - LtHip_Origin)
+  )
+  com_positions.data["ThighR_CoM"] = RtHip_Origin - (
+      0.433 * (RtShk_origin - RtHip_Origin)
+  )
+  com_positions.data["ShankL_CoM"] = LtShk_origin + (
+      0.433 * (LtFoot_origin - LtShk_origin)
+  )
+  com_positions.data["ShankR_CoM"] = RtShk_origin + (
+      0.433 * (RtFoot_origin - RtShk_origin)
+  )
+  com_positions.data["FootL_CoM"] = LtFoot_origin + (
+      0.5 * (markers.data["L5TH"] - LtFoot_origin)
+  )
+  com_positions.data["FootR_CoM"] = RtFoot_origin + (
+      0.5 * (markers.data["R5TH"] - RtFoot_origin)
   )
 
-  standalone_code = f"""import kineticstoolkit.lab as ktk
-import matplotlib.pyplot as plt
+  com_velocities = ktk.filters.deriv(com_positions)
+  com_accelerations = ktk.filters.deriv(com_velocities)
 
-# 1. Load the C3D file
-c3d_data = ktk.read_c3d("{c3d_file_path}")
+  omega_raw = ktk.filters.deriv(angles)
+  omega = transform_to_omega(angles, omega_raw)
+  omega_filt = ktk.filters.butter(omega, fc=5)
+  alpha = ktk.filters.deriv(omega_filt)
 
-# ==========================================
-# PART A: Plot Two Trajectory Points
-# ==========================================
-points = c3d_data["Points"]
-marker1_name = "{marker1}"
-marker2_name = "{marker2}"
+  FP1, FP2, FP1_filtered, FP2_filtered = process_cop(c3d_file_path)
+  fp1 = FP1_filtered.copy()
+  fp2 = FP2_filtered.copy()
+  fp1.resample(120, kind="linear", in_place=True)
+  fp2.resample(120, kind="linear", in_place=True)
 
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+  # Shift time vectors so ALL analog/force objects match marker time
+  t0_target = float(markers.time[0])
+  for ts_obj in [raw_analogs, fplate, FP1, fp1, FP2, fp2]:
+    if ts_obj is not None:
+      shift = t0_target - float(ts_obj.time[0])
+      if abs(shift) > 1e-4:
+        ts_obj.time = ts_obj.time + shift
 
-# Plot Marker 1
-ax1.plot(points.time, points.data[marker1_name][:, 0], label=f"{{marker1_name}} X (M-L)", color="blue")
-ax1.plot(points.time, points.data[marker1_name][:, 1], label=f"{{marker1_name}} Y (A-P)", color="green")
-ax1.plot(points.time, points.data[marker1_name][:, 2], label=f"{{marker1_name}} Z (Vertical)", color="red")
-ax1.set_title(f"Full Trial Trajectory: {{marker1_name}}")
-ax1.set_ylabel("Position (m)")
-ax1.grid(True)
-ax1.legend()
-
-# Plot Marker 2
-ax2.plot(points.time, points.data[marker2_name][:, 0], label=f"{{marker2_name}} X (M-L)", linestyle="--", color="blue")
-ax2.plot(points.time, points.data[marker2_name][:, 1], label=f"{{marker2_name}} Y (A-P)", linestyle="--", color="green")
-ax2.plot(points.time, points.data[marker2_name][:, 2], label=f"{{marker2_name}} Z (Vertical)", linestyle="--", color="red")
-ax2.set_title(f"Full Trial Trajectory: {{marker2_name}}")
-ax2.set_xlabel("Time (s)")
-ax2.set_ylabel("Position (m)")
-ax2.grid(True)
-ax2.legend()
-plt.tight_layout()
-plt.savefig("assignment1_partA_markers.png", dpi=300)
-plt.show()
-
-# ==========================================
-# PART B: Plot Vertical Force from Analogs
-# ==========================================
-analogs = c3d_data["Analogs"]
-vertical_channel = "{chosen_analog}"
-
-plt.figure(figsize=(10, 4))
-plt.plot(analogs.time, analogs.data[vertical_channel], color="orange", label=vertical_channel)
-plt.title(f"Raw Vertical Force Signal: {{vertical_channel}}")
-plt.xlabel("Time (s)")
-plt.ylabel("Raw Voltage / ADC Units")
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-plt.savefig("assignment1_partB_analogs.png", dpi=300)
-plt.show()
-"""
-
-  st.code(standalone_code, language="python")
-
-  st.download_button(
-      label="💾 Download Assignment 1 Python Script (.py)",
-      data=standalone_code,
-      file_name="assignment1_signals.py",
-      mime="text/x-python",
+  results = compute_inverse_dynamics(
+      omega,
+      alpha,
+      com_accelerations,
+      joint_positions,
+      com_positions,
+      fplate,
+      mass_total,
+      height_total,
+      FP1_filtered=fp1,
+      FP2_filtered=fp2,
   )
+
+  # Re-verify alignment right before returning
+  for ts_obj in [raw_analogs, fplate, FP1, fp1, FP2, fp2]:
+    if ts_obj is not None:
+      shift = t0_target - float(ts_obj.time[0])
+      if abs(shift) > 1e-4:
+        ts_obj.time = ts_obj.time + shift
+
+  return markers, angles, results, FP1, fp1, FP2, fp2, raw_analogs
+
 
 # =======================================================
 # STREAMLIT UI
@@ -867,6 +632,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # Define dynamic tabs that unlock sequentially
   tab_labels = [
       "Assignment 1: Raw Signals",
+      "Assignment 2: CoM & GRF",
       "Step 1: Kinematics & Cycle Selection",
   ]
   if st.session_state.get("cycle_locked", False):
@@ -877,10 +643,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
 
   active_tabs = st.tabs(tab_labels)
-
-  import copy
-  import numpy as np
-  import plotly.graph_objects as go
 
   # =========================================================================
   # ASSIGNMENT 1: RAW SIGNALS (POINTS & ANALOGS)
@@ -974,11 +736,11 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       st.markdown(
           f"""
             * **What points do you believe `{marker1}` and `{marker2}` are?** 
-              Identify the anatomical landmarks corresponding to these acronyms based on the paper's description (e.g., `RHEE`/`LHEE` = Right/Left Heel, `SACR` = Sacrum, `RTOE`/`LTOE` = Right/Left 2nd Metatarsal).
+              Identify the anatomical landmarks corresponding to these acronyms based on the paper's description.
             * **What does each line represent?** 
-              * **X (Red):** Medio-lateral displacement .
+              * **X (Red):** Medio-lateral displacement.
               * **Y (Green):** Antero-posterior displacement.
-              * **Z (Blue):** Vertical displacement .
+              * **Z (Blue):** Vertical displacement.
             """
       )
 
@@ -989,8 +751,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         "#### Part B: Raw Vertical Force Component from `Analogs` (Not Points)"
     )
     st.caption(
-        "Select the raw vertical analog channel to inspect before calibration"
-        " or zeroing."
+        "Zoom in so that only a single foot strike is displayed. Select the raw"
+        " vertical analog channel to inspect before calibration or zeroing."
     )
 
     vertical_candidates = [
@@ -1053,11 +815,224 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     st.markdown("---")
 
+  # =========================================================================
+  # ASSIGNMENT 2: CENTRE OF MASS & GROUND REACTION FORCES
+  # =========================================================================
+  with active_tabs[1]:
+    st.subheader("Assignment 2: Centre of Mass & Ground Reaction Forces")
+    st.markdown(
+        """
+        Complete the three deliverables below to inspect the estimated whole-body Centre of Mass (CoM) 
+        and evaluate the calibrated Ground Reaction Force across the trial and zoomed in on a single foot strike.
+        """
+    )
+
+    markers_ts = st.session_state["markers"]
+
+    # --- Part 1: Centre of Mass Trajectory (4 Lines) ---
+    st.markdown("#### Part 1: Best Estimate of Centre of Mass (CoM)")
+    st.caption(
+        "Plotting the homogeneous 4D coordinates of the estimated pelvis/body"
+        " CoM."
+    )
+
+    # Estimate CoM from pelvis landmarks
+    lt_hip = 0.5 * (markers_ts.data["LGTR"] + markers_ts.data["LASI"])
+    rt_hip = 0.5 * (markers_ts.data["RGTR"] + markers_ts.data["RASI"])
+    pelvis_com = lt_hip + 0.5 * (rt_hip - lt_hip)  # Shape (N, 4)
+
+    fig_as2_com = go.Figure()
+    com_lines_info = [
+        ("Line 1: X (Medio-Lateral)", "#ef4444", "solid"),
+        ("Line 2: Y (Antero-Posterior)", "#22c55e", "solid"),
+        ("Line 3: Z (Vertical)", "#3b82f6", "solid"),
+        ("Line 4: Homogeneous Scale (W = 1.0)", "#a855f7", "dot"),
+    ]
+
+    for col_idx, (name, color, dash) in enumerate(com_lines_info):
+      fig_as2_com.add_trace(
+          go.Scatter(
+              x=markers_ts.time,
+              y=pelvis_com[:, col_idx],
+              mode="lines",
+              name=name,
+              line=dict(color=color, dash=dash, width=2),
+          )
+      )
+
+    fig_as2_com.update_layout(
+        title="Centre of Mass (Pelvis Estimate) - 4-Line Trajectory",
+        xaxis_title="Time (s)",
+        yaxis_title="Position (m) / Homogeneous Unit",
+        template="plotly_dark",
+        hovermode="x unified",
+        margin=dict(l=20, r=20, t=40, b=20),
+    )
+    st.plotly_chart(fig_as2_com, use_container_width=True)
+
+    with st.expander("💡 Lab Question: Explain the 4 Lines on the CoM Plot"):
+      st.markdown(
+          """
+            * **Line 1 (X, Red):** Medio-lateral displacement (side-to-side body sway toward the supporting limb during each stance phase).
+            * **Line 2 (Y, Green):** Antero-posterior displacement (steady forward progression down the laboratory walkway).
+            * **Line 3 (Z, Blue):** Vertical displacement (cyclical elevation oscillating between ~0.9 m and 1.0 m, dipping at double support and peaking at mid-stance).
+            * **Line 4 (Purple, Dot):** Homogeneous scale coordinate ($W = 1.0$). In rigid body kinematics and Kineticstoolkit, 3D positions are stored as 4-element vectors $[x, y, z, 1]^T$ to allow matrix multiplications for translations and rotations.
+            """
+      )
+
+    st.markdown("---")
+
+    # --- Part 2: Full-Trial Ground Reaction Force ---
+    st.markdown("#### Part 2: Full-Trial Ground Reaction Forces")
+    st.caption("Select a force plate to view its calibrated forces in Newtons.")
+
+    col_fp_choice, _ = st.columns([1, 2])
+    with col_fp_choice:
+      as2_plate = st.radio(
+          "Select Force Plate to Inspect:",
+          ["FP1", "FP2"],
+          horizontal=True,
+          key="as2_fp_choice_radio",
+      )
+
+    raw_fp_ts = (
+        st.session_state["FP1_raw"]
+        if as2_plate == "FP1"
+        else st.session_state["FP2_raw"]
+    )
+    p_num = "1" if as2_plate == "FP1" else "2"
+
+    grf_channel_meta = [
+        (f"F{p_num}X (Medio-Lateral)", f"F{p_num}X", "#ef4444"),
+        (
+            f"F{p_num}Y (Antero-Posterior: Braking/Propulsion)",
+            f"F{p_num}Y",
+            "#22c55e",
+        ),
+        (f"F{p_num}Z (Vertical Force)", f"F{p_num}Z", "#3b82f6"),
+    ]
+
+    fig_full_grf = go.Figure()
+    for label, key, color in grf_channel_meta:
+      if key in raw_fp_ts.data:
+        fig_full_grf.add_trace(
+            go.Scatter(
+                x=raw_fp_ts.time,
+                y=raw_fp_ts.data[key],
+                mode="lines",
+                name=label,
+                line=dict(color=color, width=1.8),
+            )
+        )
+
+    fig_full_grf.update_layout(
+        title=f"Full Trial Ground Reaction Force: {as2_plate}",
+        xaxis_title="Time (s)",
+        yaxis_title="Force (N)",
+        template="plotly_dark",
+        hovermode="x unified",
+        margin=dict(l=20, r=20, t=40, b=20),
+    )
+    st.plotly_chart(fig_full_grf, use_container_width=True)
+
+    with st.expander("💡 Lab Question: What Have You Plotted in Part 2?"):
+      st.markdown(
+          f"""
+            * **Explanation:** You have plotted the calibrated tri-axial Ground Reaction Force components ($F_x, F_y, F_z$) for **{as2_plate}** in physical units of **Newtons (N)** across the entire trial duration.
+            * **Signal Behavior:** The signal hovers near 0 N when no subject is on the plate and displays prominent deflections during the foot contact phase.
+            """
+      )
+
+    st.markdown("---")
+
+    # --- Part 3: Zoomed-In Single Foot Strike ---
+    st.markdown("#### Part 3: Zoomed-In Single Foot Strike")
+    st.caption("Adjust the window below to isolate a single stance phase.")
+
+    t_fp_start = float(raw_fp_ts.time[0])
+    t_fp_end = float(raw_fp_ts.time[-1])
+
+    # Automatically identify stance bounds where |Fz| > 50 N
+    fz_trace = (
+        raw_fp_ts.data[f"F{p_num}Z"]
+        if f"F{p_num}Z" in raw_fp_ts.data
+        else np.array([])
+    )
+    contact_pts = np.where(np.abs(fz_trace) > 50.0)[0]
+    if len(contact_pts) > 0:
+      auto_start = float(raw_fp_ts.time[contact_pts[0]]) - 0.1
+      auto_end = float(raw_fp_ts.time[contact_pts[-1]]) + 0.1
+    else:
+      auto_start = t_fp_start + 0.5
+      auto_end = auto_start + 0.8
+
+    col_z1, col_z2 = st.columns(2)
+    with col_z1:
+      strike_zoom_s = st.number_input(
+          "Foot Strike Window Start (s):",
+          min_value=t_fp_start,
+          max_value=t_fp_end,
+          value=round(max(t_fp_start, auto_start), 3),
+          step=0.01,
+          format="%.3f",
+          key="as2_zoom_start",
+      )
+    with col_z2:
+      strike_zoom_e = st.number_input(
+          "Foot Strike Window End (s):",
+          min_value=t_fp_start,
+          max_value=t_fp_end,
+          value=round(min(t_fp_end, auto_end), 3),
+          step=0.01,
+          format="%.3f",
+          key="as2_zoom_end",
+      )
+
+    fig_zoom_grf = go.Figure()
+    for label, key, color in grf_channel_meta:
+      if key in raw_fp_ts.data:
+        fig_zoom_grf.add_trace(
+            go.Scatter(
+                x=raw_fp_ts.time,
+                y=raw_fp_ts.data[key],
+                mode="lines",
+                name=label,
+                line=dict(color=color, width=2.5),
+            )
+        )
+
+    fig_zoom_grf.update_layout(
+        title=(
+            f"Zoomed Single Foot Strike: {as2_plate} ({strike_zoom_s:.3f}s to"
+            f" {strike_zoom_e:.3f}s)"
+        ),
+        xaxis_title="Time (s)",
+        yaxis_title="Force (N)",
+        template="plotly_dark",
+        hovermode="x unified",
+        xaxis=dict(range=[strike_zoom_s, strike_zoom_e], autorange=False),
+        margin=dict(l=20, r=20, t=40, b=20),
+    )
+    st.plotly_chart(fig_zoom_grf, use_container_width=True)
+
+    with st.expander("💡 Lab Question: Comparison & Noise Discussion"):
+      st.markdown(
+          """
+            * **Comparison with Assignment 1:**
+              * In Assignment 1, you plotted uncalibrated raw voltage/counts directly from `c3d["Analogs"]`.
+              * In Assignment 2, calibration matrices and amplifier gain factors have transformed those electrical signals into calibrated forces in Newtons (N).
+            * **Noise Content Analysis:**
+              * **Baseline Noise:** The unloaded baseline has slight fluctuations (~5–10 N) compared to the raw ADC voltage.
+              * **Impact Transients vs. Noise:** Notice the sharp, high-frequency oscillations during the initial 50 ms of heel strike (the heel impact transient). This is **not purely electronic noise**; it reflects physical mechanical shock propagation through the leg skeleton and the natural resonance/vibration frequency of the force plate mounting structure.
+            """
+      )
+
+    st.markdown("---")
 
   # =========================================================================
   # STEP 1: KINEMATICS & GAIT CYCLE IDENTIFICATION
   # =========================================================================
-  with active_tabs[1]:
+  with active_tabs[2]:
     st.subheader("Step 1: Identify and Isolate One Gait Cycle")
     st.caption(
         "Inspect sagittal kinematics. Drag a box across one gait cycle (heel"
@@ -1227,14 +1202,15 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # =========================================================================
   # STEP 2: GRF DECISIONS (INDEPENDENT FP1 & FP2 ZEROING)
   # =========================================================================
-  if st.session_state.get("cycle_locked", False) and len(active_tabs) > 2:
-    with active_tabs[2]:
+  if st.session_state.get("cycle_locked", False) and len(active_tabs) > 3:
+    with active_tabs[3]:
       st.subheader("Step 2: Ground Reaction Force (GRF) Processing Decisions")
       st.caption(
           "Configure baseline zeroing and filtering for each force plate"
           " independently."
       )
 
+      angles_ts = st.session_state["angles"]
       k_t_start = float(angles_ts.time[0])
       k_t_end = float(angles_ts.time[-1])
       kin_duration = k_t_end - k_t_start
@@ -1434,8 +1410,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # =========================================================================
   # STEP 3: COP & BUTTERFLY PLOT
   # =========================================================================
-  if st.session_state.get("filter_locked", False) and len(active_tabs) > 3:
-    with active_tabs[3]:
+  if st.session_state.get("filter_locked", False) and len(active_tabs) > 4:
+    with active_tabs[4]:
       st.subheader("Step 3: Center of Pressure (COP) Analysis")
       chosen_plate = st.session_state.get("chosen_plate", "FP1")
       fc_val = st.session_state.get("chosen_fc", 100)
@@ -1445,7 +1421,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       )
       debias_status = (
           "Zeroed (Debiased)"
-          if st.session_state.get("apply_debias", False)
+          if st.session_state.get(f"{chosen_plate}_debias", False)
           else "Raw (Non-Zeroed)"
       )
 
