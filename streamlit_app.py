@@ -839,7 +839,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     markers_ts = st.session_state["markers"]
 
 
-
 # --- Part 1: Centre of Mass Trajectory (4 Lines) ---
     st.markdown("#### Part 1: Best Estimate of Centre of Mass (CoM)")
     st.caption(
@@ -848,63 +847,66 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
 
     available_marker_list = list(markers_ts.data.keys())
-    
-    # Default to SACR or a pelvis marker if present, otherwise first available
-    preferred_com_defaults = ["SACR", "RASI", "LASI", "RGTR", "LGTR"]
-    def_com_idx = 0
-    for p_name in preferred_com_defaults:
-      if p_name in available_marker_list:
-        def_com_idx = available_marker_list.index(p_name)
-        break
+    com_marker_options = ["None (Select a marker)"] + available_marker_list
 
     c_opt1, _ = st.columns([2, 1])
     with c_opt1:
       chosen_marker = st.selectbox(
           "Student Decision: Select Raw Marker as Best CoM Estimate:",
-          available_marker_list,
-          index=def_com_idx,
+          com_marker_options,
+          index=0,  # Defaults to "None (Select a marker)"
           key="as2_raw_com_marker",
       )
 
-    # Extract raw marker trajectory directly (N x 4)
-    selected_com = markers_ts.data[chosen_marker]
-
-    # Ensure homogeneous coordinates (N, 4) with W = 1.0
-    if selected_com.shape[-1] == 3:
-      ones_col = np.ones((len(selected_com), 1))
-      selected_com = np.hstack([selected_com, ones_col])
-    elif selected_com.shape[-1] == 4:
-      selected_com = np.copy(selected_com)
-      selected_com[:, 3] = 1.0
-
-    # Plot the 4 lines
     fig_as2_com = go.Figure()
-    com_lines_info = [
-        ("Line 1: X (Medio-Lateral)", "#ef4444", "solid"),
-        ("Line 2: Y (Antero-Posterior)", "#22c55e", "solid"),
-        ("Line 3: Z (Vertical)", "#3b82f6", "solid"),
-        ("Line 4: Homogeneous Coordinate (W = 1.0)", "#a855f7", "dot"),
-    ]
 
-    for col_idx, (name, color, dash) in enumerate(com_lines_info):
-      fig_as2_com.add_trace(
-          go.Scatter(
-              x=markers_ts.time,
-              y=selected_com[:, col_idx],
-              mode="lines",
-              name=name,
-              line=dict(color=color, dash=dash, width=2),
-          )
+    if chosen_marker != "None (Select a marker)":
+      # Extract raw marker trajectory directly (N x 4)
+      selected_com = markers_ts.data[chosen_marker]
+
+      # Ensure homogeneous coordinates (N, 4) with W = 1.0
+      if selected_com.shape[-1] == 3:
+        ones_col = np.ones((len(selected_com), 1))
+        selected_com = np.hstack([selected_com, ones_col])
+      elif selected_com.shape[-1] == 4:
+        selected_com = np.copy(selected_com)
+        selected_com[:, 3] = 1.0
+
+      com_lines_info = [
+          ("Line 1: X (Medio-Lateral)", "#ef4444", "solid"),
+          ("Line 2: Y (Antero-Posterior)", "#22c55e", "solid"),
+          ("Line 3: Z (Vertical)", "#3b82f6", "solid"),
+          ("Line 4: Homogeneous Coordinate (W = 1.0)", "#a855f7", "dot"),
+      ]
+
+      for col_idx, (name, color, dash) in enumerate(com_lines_info):
+        fig_as2_com.add_trace(
+            go.Scatter(
+                x=markers_ts.time,
+                y=selected_com[:, col_idx],
+                mode="lines",
+                name=name,
+                line=dict(color=color, dash=dash, width=2),
+            )
+        )
+
+      fig_as2_com.update_layout(
+          title=f"CoM Estimate: Raw Marker [{chosen_marker}] - 4-Line Trajectory",
+          xaxis_title="Time (s)",
+          yaxis_title="Position (m) / Homogeneous Unit",
+          template="plotly_dark",
+          hovermode="x unified",
+          margin=dict(l=20, r=20, t=40, b=20),
+      )
+    else:
+      fig_as2_com.update_layout(
+          title="Centre of Mass - Please select a marker from above",
+          xaxis_title="Time (s)",
+          yaxis_title="Position (m)",
+          template="plotly_dark",
+          margin=dict(l=20, r=20, t=40, b=20),
       )
 
-    fig_as2_com.update_layout(
-        title=f"CoM Estimate: Raw Marker [{chosen_marker}] - 4-Line Trajectory",
-        xaxis_title="Time (s)",
-        yaxis_title="Position (m) / Homogeneous Unit",
-        template="plotly_dark",
-        hovermode="x unified",
-        margin=dict(l=20, r=20, t=40, b=20),
-    )
     st.plotly_chart(fig_as2_com, use_container_width=True)
 
     with st.expander("💡 Lab Question: Explain Your Selection & The 4 Lines"):
