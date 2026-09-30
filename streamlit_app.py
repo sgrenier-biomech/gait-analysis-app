@@ -840,79 +840,44 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
 
 
-    # --- Part 1: Centre of Mass Trajectory (4 Lines) ---
+# --- Part 1: Centre of Mass Trajectory (4 Lines) ---
     st.markdown("#### Part 1: Best Estimate of Centre of Mass (CoM)")
     st.caption(
-        "Evaluate available markers and anatomical approximations to select"
-        " your best estimate of whole-body CoM."
+        "Evaluate the available raw markers in your dataset and select which single marker "
+        "provides the best surrogate estimate of whole-body CoM."
     )
 
-    # 1. Provide student options for CoM estimates
-    com_candidate_options = [
-        "Pelvis Center (Midpoint between Right & Left Hip Joint Centers)",
-        "Sacrum Marker (SACR)",
-        "Mid-ASIS (Midpoint between RASI & LASI)",
-        "Pelvis Rigid Body Origin (SACR / ASIS Plane)",
-        "Specific Marker of Your Choice",
-    ]
+    available_marker_list = list(markers_ts.data.keys())
+    
+    # Default to SACR or a pelvis marker if present, otherwise first available
+    preferred_com_defaults = ["SACR", "RASI", "LASI", "RGTR", "LGTR"]
+    def_com_idx = 0
+    for p_name in preferred_com_defaults:
+      if p_name in available_marker_list:
+        def_com_idx = available_marker_list.index(p_name)
+        break
 
-    c_opt1, c_opt2 = st.columns([2, 1])
+    c_opt1, _ = st.columns([2, 1])
     with c_opt1:
-      chosen_com_method = st.selectbox(
-          "Student Decision: Select Best CoM Estimate:",
-          com_candidate_options,
-          index=0,
-          key="as2_com_method",
+      chosen_marker = st.selectbox(
+          "Student Decision: Select Raw Marker as Best CoM Estimate:",
+          available_marker_list,
+          index=def_com_idx,
+          key="as2_raw_com_marker",
       )
 
-    with c_opt2:
-      custom_marker = None
-      if chosen_com_method == "Specific Marker of Your Choice":
-        custom_marker = st.selectbox(
-            "Select Marker:",
-            list(markers_ts.data.keys()),
-            key="as2_custom_com_marker",
-        )
-
-    # 2. Compute or extract the chosen estimate (ensuring shape is N x 4)
-    if (
-        chosen_com_method
-        == "Pelvis Center (Midpoint between Right & Left Hip Joint Centers)"
-    ):
-      lt_hip = 0.5 * (markers_ts.data["LGTR"] + markers_ts.data["LASI"])
-      rt_hip = 0.5 * (markers_ts.data["RGTR"] + markers_ts.data["RASI"])
-      selected_com = lt_hip + 0.5 * (rt_hip - lt_hip)
-      plot_title = "Estimated CoM: Hip Joint Center Midpoint (Pelvis Center)"
-
-    elif chosen_com_method == "Sacrum Marker (SACR)":
-      selected_com = markers_ts.data["SACR"]
-      plot_title = "Estimated CoM: Sacrum Marker (SACR)"
-
-    elif chosen_com_method == "Mid-ASIS (Midpoint between RASI & LASI)":
-      selected_com = 0.5 * (markers_ts.data["RASI"] + markers_ts.data["LASI"])
-      plot_title = "Estimated CoM: Mid-ASIS"
-
-    elif (
-        chosen_com_method == "Pelvis Rigid Body Origin (SACR / ASIS Plane)"
-    ):
-      selected_com = (
-          0.5 * (markers_ts.data["RASI"] + markers_ts.data["LASI"])
-          + markers_ts.data["SACR"]
-      ) * 0.5
-      plot_title = "Estimated CoM: Pelvis Centroid"
-
-    else:
-      selected_com = markers_ts.data[custom_marker]
-      plot_title = f"Estimated CoM: Marker {custom_marker}"
+    # Extract raw marker trajectory directly (N x 4)
+    selected_com = markers_ts.data[chosen_marker]
 
     # Ensure homogeneous coordinates (N, 4) with W = 1.0
     if selected_com.shape[-1] == 3:
       ones_col = np.ones((len(selected_com), 1))
       selected_com = np.hstack([selected_com, ones_col])
     elif selected_com.shape[-1] == 4:
+      selected_com = np.copy(selected_com)
       selected_com[:, 3] = 1.0
 
-    # 3. Plot the 4 lines
+    # Plot the 4 lines
     fig_as2_com = go.Figure()
     com_lines_info = [
         ("Line 1: X (Medio-Lateral)", "#ef4444", "solid"),
@@ -933,7 +898,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       )
 
     fig_as2_com.update_layout(
-        title=f"{plot_title} - 4-Line Trajectory",
+        title=f"CoM Estimate: Raw Marker [{chosen_marker}] - 4-Line Trajectory",
         xaxis_title="Time (s)",
         yaxis_title="Position (m) / Homogeneous Unit",
         template="plotly_dark",
@@ -943,8 +908,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.plotly_chart(fig_as2_com, use_container_width=True)
 
     with st.expander("💡 Lab Question: Explain Your Selection & The 4 Lines"):
-      st.markdown(f"""
-        * **Why did you select `{chosen_com_method}` as your best estimate?**
+      st.markdown("""
+        * **Why did you select this marker as your best estimate?**
           * Reflect on where the whole-body center of mass lies during upright human locomotion.
           * Compare how a single surface marker behaves relative to an average midpoint of two anatomical landmarks.
         * **What does each line on your plot represent?**
