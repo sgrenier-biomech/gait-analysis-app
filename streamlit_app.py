@@ -755,17 +755,26 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         " vertical analog channel to inspect before calibration or zeroing."
     )
 
+ # Detect sine wave channel first; fall back to vertical force or first channel
+    sine_candidates = [k for k in available_analogs if "sin" in k.lower()]
     vertical_candidates = [
         k
         for k in available_analogs
         if "fz" in k.lower() or "f1z" in k.lower() or "force" in k.lower()
     ]
+
+    if sine_candidates:
+      default_channel = sine_candidates[0]
+    elif vertical_candidates:
+      default_channel = vertical_candidates[0]
+    else:
+      default_channel = available_analogs[0] if available_analogs else None
+
     def_analog_idx = (
-        available_analogs.index(vertical_candidates[0])
-        if vertical_candidates
+        available_analogs.index(default_channel)
+        if default_channel in available_analogs
         else 0
     )
-
     c_a1, c_a2 = st.columns([2, 1])
     with c_a1:
       chosen_analog = st.selectbox(
@@ -778,7 +787,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       st.caption(
           f"Analog channels recorded: {len(available_analogs)} total channels."
       )
-
+      
     fig_as1_analog = go.Figure()
     if chosen_analog in analogs_ts.data:
       fig_as1_analog.add_trace(
