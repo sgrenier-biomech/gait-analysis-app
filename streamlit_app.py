@@ -1460,7 +1460,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     st.markdown("---")
 
-    # =============================================================
+# =============================================================
     # STEP 3: SELECT TWO FOOTSTRIKES FROM FULL SIGNAL
     # =============================================================
     st.markdown("### Step 3: Select Two Footstrikes from Full Signal")
@@ -1490,11 +1490,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       if st.button("Reset Footstrikes View", key="as3_fs_rst_btn"):
         st.session_state["as3_fs_zoom_range"] = [k_t_start, k_t_end]
         st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
-        st.session_state["as3_win_e"] = round(
-            min(k_t_end, k_t_start + 2.3), 3
-        )
-        st.session_state.pop(f"as3_num_t_s_{v_fs}", None)
-        st.session_state.pop(f"as3_num_t_e_{v_fs}", None)
+        st.session_state["as3_win_e"] = round(min(k_t_end, k_t_start + 2.3), 3)
         st.session_state["as3_fs_view_ver"] += 1
         st.rerun()
 
@@ -1574,6 +1570,9 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         key=f"as3_fs_chart_{v_fs}",
     )
 
+    # -------------------------------------------------------------
+    # Capture Mouse Selection & Update State + Version Counter
+    # -------------------------------------------------------------
     if chart_fs_event and "selection" in chart_fs_event:
       fs_boxes = chart_fs_event["selection"].get("box", [])
       if fs_boxes and len(fs_boxes) > 0 and "x" in fs_boxes[0]:
@@ -1587,9 +1586,10 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
               or abs(n_e - fs_curr_zoom[1]) > 0.005
           ):
             st.session_state["as3_fs_zoom_range"] = [n_s, n_e]
+            st.session_state["as3_fs_view_ver"] += 1
             st.rerun()
         else:
-          # Automatically update window bounds AND zoom the view to the selection
+          # Automatically update window bounds, zoom to selection, and increment version
           if (
               abs(n_s - st.session_state["as3_win_s"]) > 0.005
               or abs(n_e - st.session_state["as3_win_e"]) > 0.005
@@ -1600,17 +1600,20 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
                 max(k_t_start, n_s - 0.05),
                 min(k_t_end, n_e + 0.05),
             ]
-            st.session_state[f"as3_num_t_s_{v_fs}"] = n_s
-            st.session_state[f"as3_num_t_e_{v_fs}"] = n_e
+            st.session_state["as3_fs_view_ver"] += 1
             st.rerun()
 
+    # -------------------------------------------------------------
+    # Number Inputs Tied to the Current Version
+    # -------------------------------------------------------------
+    v_fs = st.session_state["as3_fs_view_ver"]
     c_fs_plat, c_fs_s, c_fs_e = st.columns([1.5, 2, 2])
     with c_fs_plat:
       as3_plate = st.radio(
           "Target Platform for 6-Component Plotting:",
           ["FP1", "FP2"],
           horizontal=True,
-          key="as3_fs_plate_choice",
+          key=f"as3_fs_plate_choice_{v_fs}",
       )
     with c_fs_s:
       as3_t_start = st.number_input(
@@ -1636,36 +1639,64 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       st.session_state["as3_win_e"] = as3_t_end
 
     st.markdown("---")    
-                             
+
+# =============================================================
+    # STEP 4: APPLY FILTERING & SIGNAL CONDITIONING
     # =============================================================
-    # STEP 4: APPLY FILTERING CUTOFF FREQUENCY
-    # =============================================================
-    st.markdown("### Step 4: Apply Filtering Cutoff Frequency")
+    st.markdown("### Step 4: Apply Filtering Algorithm & Parameters")
     st.caption(
-        "Select your low-pass filter algorithm and configure the cutoff"
-        " frequency (defaulted to 100 Hz)."
+        "Select your filtering or smoothing algorithm to condition the isolated footstrike signals."
     )
 
     f_col1, f_col2 = st.columns(2)
     with f_col1:
       as3_filter_mode = st.selectbox(
           "Filter Algorithm:",
-          ["Butterworth Low-pass", "None (Raw)"],
+          [
+              "Butterworth Low-pass",
+              "Butterworth High-pass",
+              "Moving Average Smoothing",
+              "None (Raw)",
+          ],
           index=0,
           key="as3_filt_sel_step4",
       )
+
     with f_col2:
+      as3_fc = None
+      as3_smooth_window = None
+
       if as3_filter_mode == "Butterworth Low-pass":
         as3_fc = st.slider(
-            "Cutoff Frequency Fc (Hz):",
+            "Low-pass Cutoff Frequency Fc (Hz):",
             min_value=5,
             max_value=200,
             value=100,
             step=5,
-            key="as3_fc_slider_step4",
+            key="as3_fc_slider_lp",
+            help="Attenuates frequencies higher than Fc (mains hum, plate vibrations).",
+        )
+      elif as3_filter_mode == "Butterworth High-pass":
+        as3_fc = st.slider(
+            "High-pass Cutoff Frequency Fc (Hz):",
+            min_value=1,
+            max_value=50,
+            value=10,
+            step=1,
+            key="as3_fc_slider_hp",
+            help="Attenuates frequencies lower than Fc (low-frequency baseline drift).",
+        )
+      elif as3_filter_mode == "Moving Average Smoothing":
+        as3_smooth_window = st.slider(
+            "Smoothing Window Length (Samples):",
+            min_value=3,
+            max_value=101,
+            value=11,
+            step=2,
+            key="as3_smooth_slider",
+            help="Number of samples across the moving average kernel (must be odd).",
         )
       else:
-        as3_fc = None
         st.caption("Displaying unfiltered raw data.")
 
     # -------------------------------------------------------------
@@ -1716,13 +1747,47 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     for k in fp_work.data.keys():
       window_processed_ts.data[k] = np.copy(fp_work.data[k][w_i_s:w_i_e])
 
-    # 4. Filtering
-    if as3_filter_mode == "Butterworth Low-pass" and as3_fc is not None:
-      window_filtered_ts = ktk.filters.butter(window_processed_ts, fc=as3_fc)
-      window_filtered_ts.time = time_window
-    else:
-      window_filtered_ts = window_processed_ts
+# 4. Filtering / Smoothing Application
+    filter_legend_label = "Processed"
+    window_filtered_ts = copy.deepcopy(window_processed_ts)
 
+    try:
+      if as3_filter_mode == "Butterworth Low-pass" and as3_fc is not None:
+        window_filtered_ts = ktk.filters.butter(window_processed_ts, fc=as3_fc)
+        window_filtered_ts.time = time_window
+        filter_legend_label = f"Low-pass ({as3_fc} Hz)"
+
+      elif as3_filter_mode == "Butterworth High-pass" and as3_fc is not None:
+        # High-pass: Raw minus Low-pass baseline
+        lp_baseline = ktk.filters.butter(window_processed_ts, fc=as3_fc)
+        for k in window_filtered_ts.data.keys():
+          window_filtered_ts.data[k] = (
+              window_processed_ts.data[k] - lp_baseline.data[k]
+          )
+        window_filtered_ts.time = time_window
+        filter_legend_label = f"High-pass ({as3_fc} Hz)"
+
+      elif (
+          as3_filter_mode == "Moving Average Smoothing"
+          and as3_smooth_window is not None
+      ):
+        window_filtered_ts = ktk.filters.smooth(
+            window_processed_ts, window_length=as3_smooth_window
+        )
+        window_filtered_ts.time = time_window
+        filter_legend_label = f"Smoothed ({as3_smooth_window} pts)"
+
+      else:
+        window_filtered_ts = copy.deepcopy(window_processed_ts)
+        filter_legend_label = "Processed (Unfiltered)"
+    except Exception as e:
+      st.warning(
+          f"Filter could not be applied ({e}). Falling back to unfiltered data."
+      )
+      window_filtered_ts = copy.deepcopy(window_processed_ts)
+      filter_legend_label = "Processed (Unfiltered)"
+      
+      
     st.markdown("---")
 
     # -------------------------------------------------------------
@@ -1769,7 +1834,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         ),
     ]
 
-    col_g1, col_g2 = st.columns(2)
+col_g1, col_g2 = st.columns(2)
 
     for i, (ch_key, comp_title, y_label, comp_color) in enumerate(
         component_specs
@@ -1779,10 +1844,11 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         fig_comp = go.Figure()
 
         if ch_key in window_raw_ts.data:
+          y_raw = np.asarray(window_raw_ts.data[ch_key]).squeeze()
           fig_comp.add_trace(
               go.Scatter(
                   x=window_raw_ts.time,
-                  y=window_raw_ts.data[ch_key],
+                  y=y_raw,
                   mode="lines",
                   name="Unprocessed (Raw)",
                   line=dict(color="#94a3b8", dash="dot", width=1.5),
@@ -1790,17 +1856,17 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
               )
           )
 
-        if ch_key in window_filtered_ts.data:
+        if (
+            window_filtered_ts is not None
+            and ch_key in window_filtered_ts.data
+        ):
+          y_filt = np.asarray(window_filtered_ts.data[ch_key]).squeeze()
           fig_comp.add_trace(
               go.Scatter(
                   x=window_filtered_ts.time,
-                  y=window_filtered_ts.data[ch_key],
+                  y=y_filt,
                   mode="lines",
-                  name=(
-                      f"Processed ({as3_fc} Hz)"
-                      if as3_filter_mode == "Butterworth Low-pass"
-                      else "Processed"
-                  ),
+                  name=filter_legend_label,
                   line=dict(color=comp_color, width=2.5),
               )
           )
@@ -1815,8 +1881,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             xaxis=dict(range=[as3_t_start, as3_t_end], autorange=False),
         )
         st.plotly_chart(fig_comp, use_container_width=True)
-
-
+        
     # -------------------------------------------------------------
     # 5. Assignment Helper & Theory Explanations
     # -------------------------------------------------------------
