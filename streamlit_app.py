@@ -1834,7 +1834,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         ),
     ]
 
-col_g1, col_g2 = st.columns(2)
+    col_g1, col_g2 = st.columns(2)
 
     for i, (ch_key, comp_title, y_label, comp_color) in enumerate(
         component_specs
