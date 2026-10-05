@@ -1079,9 +1079,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
     st.markdown(
         """
-        Inspect the full-trial stacked force plate traces below to locate the foot strikes. 
-        Select a window containing **two foot strikes** (either two strikes of the same foot on one plate, or alternating strikes across FP1 and FP2), 
-        configure your signal conditioning choices, and analyze all 6 kinetic components ($F_x, F_y, F_z, M_x, M_y, M_z$).
+        Inspect the full-trial stacked force plate traces below to locate the foot strikes and quiet baseline intervals. 
+        Select a window containing **two foot strikes**, configure your signal conditioning choices, and analyze all 6 kinetic components ($F_x, F_y, F_z, M_x, M_y, M_z$).
         """
     )
 
@@ -1095,52 +1094,87 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     n_total_fp = len(raw_fp1.time)
 
     # -------------------------------------------------------------
-    # 1. Full-Trial Stacked Overview Graphs (FP1 over FP2)
+    # Session State Initialization for Assignment 3
     # -------------------------------------------------------------
-    st.markdown("#### 1. Full-Trial Platform Overview (Locate Foot Strikes)")
-    st.caption(
-        "Use the graph below to spot foot contacts. Drag a box across two foot strikes to update the window, or enter timestamps below."
-    )
-
-    # State initialization for Assignment 3 window
     if "as3_win_s" not in st.session_state or st.session_state["as3_win_s"] < k_t_start:
       st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
     if "as3_win_e" not in st.session_state or st.session_state["as3_win_e"] <= st.session_state["as3_win_s"]:
       st.session_state["as3_win_e"] = round(min(k_t_end, st.session_state["as3_win_s"] + 1.8), 3)
 
-    curr_win_s = float(st.session_state["as3_win_s"])
-    curr_win_e = float(st.session_state["as3_win_e"])
+    if "as3_base_s" not in st.session_state or st.session_state["as3_base_s"] < k_t_start:
+      st.session_state["as3_base_s"] = round(k_t_start + 0.1, 3)
+    if "as3_base_e" not in st.session_state or st.session_state["as3_base_e"] <= st.session_state["as3_base_s"]:
+      st.session_state["as3_base_e"] = round(k_t_start + 0.4, 3)
+
+    # Widget state sync
+    if "as3_num_t_s" not in st.session_state:
+      st.session_state["as3_num_t_s"] = float(st.session_state["as3_win_s"])
+    if "as3_num_t_e" not in st.session_state:
+      st.session_state["as3_num_t_e"] = float(st.session_state["as3_win_e"])
+    if "as3_bs" not in st.session_state:
+      st.session_state["as3_bs"] = float(st.session_state["as3_base_s"])
+    if "as3_be" not in st.session_state:
+      st.session_state["as3_be"] = float(st.session_state["as3_base_e"])
+
+    # -------------------------------------------------------------
+    # 1. Full-Trial Stacked Overview Graphs (FP1 over FP2)
+    # -------------------------------------------------------------
+    st.markdown("#### 1. Full-Trial Platform Overview (Interactive Selection)")
+    st.caption(
+        "Use the Box Select tool on the graph toolbar to drag across a region on either force plate trace."
+    )
+
+    c_mode1, _ = st.columns([2, 1])
+    with c_mode1:
+      graph_select_target = st.radio(
+          "Current Selection Target for Graph Dragging:",
+          ["Two Foot Strikes Window", "Quiescent Baseline Window (Zeroing)"],
+          horizontal=True,
+          key="as3_graph_drag_target",
+      )
 
     from plotly.subplots import make_subplots
     fig_overview = make_subplots(
-        rows=2, cols=1, 
-        shared_xaxes=True, 
+        rows=2, cols=1,
+        shared_xaxes=True,
         vertical_spacing=0.08,
         subplot_titles=("Force Platform 1: Vertical Force (F1Z)", "Force Platform 2: Vertical Force (F2Z)")
     )
 
-    # Trace for FP1 Fz
     if "F1Z" in raw_fp1.data:
       fig_overview.add_trace(
           go.Scatter(x=raw_fp1.time, y=raw_fp1.data["F1Z"], mode="lines", line=dict(color="#3b82f6", width=1.5), name="FP1 Fz"),
           row=1, col=1
       )
-
-    # Trace for FP2 Fz
     if "F2Z" in raw_fp2.data:
       fig_overview.add_trace(
           go.Scatter(x=raw_fp2.time, y=raw_fp2.data["F2Z"], mode="lines", line=dict(color="#22c55e", width=1.5), name="FP2 Fz"),
           row=2, col=1
       )
 
-    # Add shaded window box across both subplots
+    # Shaded rectangles for both Foot Strike and Baseline windows
+    curr_win_s = float(st.session_state["as3_win_s"])
+    curr_win_e = float(st.session_state["as3_win_e"])
+    curr_base_s = float(st.session_state["as3_base_s"])
+    curr_base_e = float(st.session_state["as3_base_e"])
+
     for r in [1, 2]:
+      # Stance Window (Yellow)
       fig_overview.add_vrect(
           x0=curr_win_s, x1=curr_win_e,
           fillcolor="rgba(234, 179, 8, 0.2)",
           line_width=2, line_dash="dash", line_color="#eab308",
-          annotation_text="Selected 2-Strike Window" if r == 1 else "",
+          annotation_text="2-Strike Window" if r == 1 else "",
           annotation_position="top left",
+          row=r, col=1
+      )
+      # Quiescent Baseline Window (Cyan)
+      fig_overview.add_vrect(
+          x0=curr_base_s, x1=curr_base_e,
+          fillcolor="rgba(6, 182, 212, 0.25)",
+          line_width=2, line_dash="dot", line_color="#06b6d4",
+          annotation_text="Baseline Zero" if r == 1 else "",
+          annotation_position="bottom left",
           row=r, col=1
       )
 
@@ -1156,11 +1190,11 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
 
     chart_select = st.plotly_chart(
-        fig_overview, 
-        use_container_width=True, 
-        on_select="rerun", 
-        selection_mode=["box"], 
-        key="as3_overview_chart"
+        fig_overview,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode=["box"],
+        key="as3_overview_chart",
     )
 
     # Capture mouse box selections from the stacked overview
@@ -1171,10 +1205,21 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         x_pts = box_list[0]["x"]
         n_s = round(float(min(x_pts)), 3)
         n_e = round(float(max(x_pts)), 3)
-        if abs(n_s - st.session_state["as3_win_s"]) > 0.005 or abs(n_e - st.session_state["as3_win_e"]) > 0.005:
-          st.session_state["as3_win_s"] = n_s
-          st.session_state["as3_win_e"] = n_e
-          st.rerun()
+
+        if graph_select_target == "Two Foot Strikes Window":
+          if abs(n_s - st.session_state["as3_win_s"]) > 0.005 or abs(n_e - st.session_state["as3_win_e"]) > 0.005:
+            st.session_state["as3_win_s"] = n_s
+            st.session_state["as3_win_e"] = n_e
+            st.session_state["as3_num_t_s"] = n_s
+            st.session_state["as3_num_t_e"] = n_e
+            st.rerun()
+        else:
+          if abs(n_s - st.session_state["as3_base_s"]) > 0.005 or abs(n_e - st.session_state["as3_base_e"]) > 0.005:
+            st.session_state["as3_base_s"] = n_s
+            st.session_state["as3_base_e"] = n_e
+            st.session_state["as3_bs"] = n_s
+            st.session_state["as3_be"] = n_e
+            st.rerun()
 
     # -------------------------------------------------------------
     # 2. Window Bounds & Target Platform Selection
@@ -1198,7 +1243,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           "Two-Strike Window Start (s):",
           min_value=k_t_start,
           max_value=k_t_end,
-          value=float(st.session_state["as3_win_s"]),
           step=0.01,
           format="%.3f",
           key="as3_num_t_s",
@@ -1210,7 +1254,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           "Two-Strike Window End (s):",
           min_value=k_t_start,
           max_value=k_t_end,
-          value=float(st.session_state["as3_win_e"]),
           step=0.01,
           format="%.3f",
           key="as3_num_t_e",
@@ -1229,23 +1272,23 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     col_proc1, col_proc2, col_proc3 = st.columns(3)
 
-    # A) Calibration / Scaling Option
+    # A) Calibration / Scaling Option (Defaulted to Unselected)
     with col_proc1:
       st.markdown("**A. Unit Scaling & Sign Convention**")
       apply_scale = st.checkbox(
           "Scale & Invert Forces (Up/Forward +ve)",
-          value=True,
+          value=False,
           help="Converts voltages to Newtons and aligns polarity with lab axes.",
           key="as3_scale_cb",
       )
       apply_moment_scale = st.checkbox(
           "Scale Moments (N·m Conversion)",
-          value=True,
+          value=False,
           help="Converts analog moment signals into Newton-meters.",
           key="as3_mscale_cb",
       )
 
-    # B) Quiescent Baseline Debiasing Option
+    # B) Quiescent Baseline Debiasing Option (Graphical or Number Input)
     with col_proc2:
       st.markdown("**B. Baseline Zeroing (De-bias)**")
       apply_as3_debias = st.checkbox(
@@ -1254,30 +1297,29 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           key="as3_debias_cb"
       )
 
-      b_def_start = k_t_start + 0.1
-      b_def_end = k_t_start + 0.4
       as3_b_start = st.number_input(
           "Baseline Interval Start (s):",
           min_value=k_t_start,
           max_value=k_t_end,
-          value=round(b_def_start, 3),
           step=0.01,
           format="%.3f",
           disabled=not apply_as3_debias,
           key="as3_bs",
       )
+      st.session_state["as3_base_s"] = as3_b_start
+
       as3_b_end = st.number_input(
           "Baseline Interval End (s):",
           min_value=k_t_start,
           max_value=k_t_end,
-          value=round(b_def_end, 3),
           step=0.01,
           format="%.3f",
           disabled=not apply_as3_debias,
           key="as3_be",
       )
+      st.session_state["as3_base_e"] = as3_b_end
 
-    # C) Filtering Option
+    # C) Filtering Option (Defaulted to 100 Hz)
     with col_proc3:
       st.markdown("**C. Low-Pass Filtering**")
       as3_filter_mode = st.selectbox(
@@ -1290,8 +1332,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         as3_fc = st.slider(
             "Cutoff Frequency Fc (Hz):",
             min_value=5,
-            max_value=150,
-            value=20,
+            max_value=200,
+            value=100,  # Defaulted to 100 Hz
             step=5,
             key="as3_fc_slider",
         )
