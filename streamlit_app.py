@@ -1079,9 +1079,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
     st.markdown(
         """
-        Inspect the full-trial stacked force plate traces below to locate the foot strikes and quiet baseline intervals. 
-        Select a window containing **two foot strikes**, configure your signal conditioning choices independently for each platform, 
-        and analyze all 6 kinetic components ($F_x, F_y, F_z, M_x, M_y, M_z$).
+        Follow the sequential steps below to prepare, calibrate, zero, and filter your force platform data. 
+        You will then inspect all 6 kinetic components ($F_x, F_y, F_z, M_x, M_y, M_z$) across exactly two footstrikes.
         """
     )
 
@@ -1094,304 +1093,257 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     raw_fp2 = st.session_state["FP2_raw"]
     n_total_fp = len(raw_fp1.time)
 
-    # -------------------------------------------------------------
-    # Session State Initialization for Assignment 3
-    # -------------------------------------------------------------
-    # 2-Strike Window Bounds
-    if "as3_win_s" not in st.session_state or st.session_state["as3_win_s"] < k_t_start:
-      st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
-    if "as3_win_e" not in st.session_state or st.session_state["as3_win_e"] <= st.session_state["as3_win_s"]:
-      st.session_state["as3_win_e"] = round(min(k_t_end, st.session_state["as3_win_s"] + 1.8), 3)
+    from plotly.subplots import make_subplots
 
-    # Independent Baseline Settings for FP1 & FP2
+    # -------------------------------------------------------------
+    # State Initializations for Assignment 3
+    # -------------------------------------------------------------
     for p_id, def_s, def_e in [("FP1", k_t_start + 0.1, k_t_start + 0.4), ("FP2", k_t_start + 0.8, k_t_start + 1.1)]:
-      if f"as3_{p_id}_debias" not in st.session_state:
-        st.session_state[f"as3_{p_id}_debias"] = True
+      if f"as3_{p_id}_debias_applied" not in st.session_state:
+        st.session_state[f"as3_{p_id}_debias_applied"] = False
       if f"as3_{p_id}_base_s" not in st.session_state or st.session_state[f"as3_{p_id}_base_s"] < k_t_start:
         st.session_state[f"as3_{p_id}_base_s"] = round(def_s, 3)
       if f"as3_{p_id}_base_e" not in st.session_state or st.session_state[f"as3_{p_id}_base_e"] <= st.session_state[f"as3_{p_id}_base_s"]:
         st.session_state[f"as3_{p_id}_base_e"] = round(def_e, 3)
-
-    # Synchronize widget state keys
-    if "as3_num_t_s" not in st.session_state:
-      st.session_state["as3_num_t_s"] = float(st.session_state["as3_win_s"])
-    if "as3_num_t_e" not in st.session_state:
-      st.session_state["as3_num_t_e"] = float(st.session_state["as3_win_e"])
-
-    for p_id in ["FP1", "FP2"]:
       if f"as3_bs_{p_id}" not in st.session_state:
         st.session_state[f"as3_bs_{p_id}"] = float(st.session_state[f"as3_{p_id}_base_s"])
       if f"as3_be_{p_id}" not in st.session_state:
         st.session_state[f"as3_be_{p_id}"] = float(st.session_state[f"as3_{p_id}_base_e"])
 
-    # -------------------------------------------------------------
-    # 1. Full-Trial Stacked Overview Graphs (FP1 over FP2)
-    # -------------------------------------------------------------
-    st.markdown("#### 1. Full-Trial Platform Overview (Interactive Selection)")
-    st.caption(
-        "Use the Box Select tool on the graph toolbar to drag across a region on either force plate trace."
+    if "as3_win_s" not in st.session_state or st.session_state["as3_win_s"] < k_t_start:
+      st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
+    if "as3_win_e" not in st.session_state or st.session_state["as3_win_e"] <= st.session_state["as3_win_s"]:
+      st.session_state["as3_win_e"] = round(min(k_t_end, st.session_state["as3_win_s"] + 1.8), 3)
+    if "as3_num_t_s" not in st.session_state:
+      st.session_state["as3_num_t_s"] = float(st.session_state["as3_win_s"])
+    if "as3_num_t_e" not in st.session_state:
+      st.session_state["as3_num_t_e"] = float(st.session_state["as3_win_e"])
+
+    # =============================================================
+    # STEP 1: UNIT SCALING & SIGN CONVENTION
+    # =============================================================
+    st.markdown("### Step 1: Unit Scaling & Sign Convention")
+    st.caption("Decide whether to convert raw analog units into SI units (Newtons and Newton-meters) and align polarities with laboratory axes.")
+
+    c_sc1, c_sc2 = st.columns(2)
+    with c_sc1:
+      apply_scale = st.checkbox(
+          "Scale & Invert Force Components (Upward/Forward +ve)",
+          value=False,
+          help="Converts voltages to Newtons and aligns polarities.",
+          key="as3_scale_cb"
+      )
+    with c_sc2:
+      apply_moment_scale = st.checkbox(
+          "Scale Moment Components (N·m Conversion)",
+          value=False,
+          help="Converts raw moment signals into Newton-meters.",
+          key="as3_mscale_cb"
+      )
+
+    st.markdown("---")
+
+    # =============================================================
+    # STEP 2: BASELINE ZEROING (DE-BIAS)
+    # =============================================================
+    st.markdown("### Step 2: Select Baseline Zeroing (De-bias) Interval")
+    st.info(
+        "👉 **Instruction:** Drag a box over a **quiet part of the signal** (an unloaded interval where no contact is occurring and the trace is resting flat) on the graph below to set the zero-offset period.",
+        icon="ℹ️️"
     )
 
-    c_mode1, c_mode2 = st.columns([2, 1.5])
-    with c_mode1:
-      graph_select_target = st.radio(
-          "Current Selection Target for Graph Dragging:",
-          ["Two Foot Strikes Window", "Quiescent Baseline Window (Zeroing)"],
+    c_b_plat, c_b_btn = st.columns([2, 1])
+    with c_b_plat:
+      debias_target_plate = st.radio(
+          "Active Platform to Drag & Zero:",
+          ["FP1", "FP2"],
           horizontal=True,
-          key="as3_graph_drag_target",
+          key="as3_debias_target_radio"
       )
-    with c_mode2:
-      base_target_plate = "FP1"
-      if graph_select_target == "Quiescent Baseline Window (Zeroing)":
-        base_target_plate = st.radio(
-            "Assign Dragged Baseline To:",
-            ["FP1", "FP2"],
-            horizontal=True,
-            key="as3_base_target_plate",
-        )
 
-    from plotly.subplots import make_subplots
-    fig_overview = make_subplots(
+    # Graph strictly for baseline selection
+    fig_debias = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
         vertical_spacing=0.08,
-        subplot_titles=("Force Platform 1: Vertical Force (F1Z)", "Force Platform 2: Vertical Force (F2Z)")
+        subplot_titles=("FP1: Vertical Force (F1Z) - Locate Quiet Baseline", "FP2: Vertical Force (F2Z) - Locate Quiet Baseline")
+    )
+    if "F1Z" in raw_fp1.data:
+      fig_debias.add_trace(go.Scatter(x=raw_fp1.time, y=raw_fp1.data["F1Z"], mode="lines", line=dict(color="#3b82f6", width=1.5), name="FP1 Fz"), row=1, col=1)
+    if "F2Z" in raw_fp2.data:
+      fig_debias.add_trace(go.Scatter(x=raw_fp2.time, y=raw_fp2.data["F2Z"], mode="lines", line=dict(color="#22c55e", width=1.5), name="FP2 Fz"), row=2, col=1)
+
+    fp1_bs = float(st.session_state["as3_FP1_base_s"])
+    fp1_be = float(st.session_state["as3_FP1_base_e"])
+    fp2_bs = float(st.session_state["as3_FP2_base_s"])
+    fp2_be = float(st.session_state["as3_FP2_base_e"])
+
+    fig_debias.add_vrect(x0=fp1_bs, x1=fp1_be, fillcolor="rgba(6, 182, 212, 0.25)", line_width=2, line_dash="dot", line_color="#06b6d4", annotation_text="FP1 Baseline", annotation_position="top left", row=1, col=1)
+    fig_debias.add_vrect(x0=fp2_bs, x1=fp2_be, fillcolor="rgba(217, 70, 239, 0.25)", line_width=2, line_dash="dot", line_color="#d946ef", annotation_text="FP2 Baseline", annotation_position="top left", row=2, col=1)
+
+    fig_debias.update_layout(
+        template="plotly_dark", height=420, dragmode="select", hovermode="x unified",
+        margin=dict(l=20, r=20, t=35, b=20),
+        xaxis2=dict(title="Time (s)"), yaxis=dict(title="Force (N)"), yaxis2=dict(title="Force (N)")
     )
 
+    chart_debias_event = st.plotly_chart(
+        fig_debias, use_container_width=True, on_select="rerun", selection_mode=["box"], key="as3_debias_chart"
+    )
+
+    # Capture drag box on baseline graph
+    if chart_debias_event and "selection" in chart_debias_event:
+      b_boxes = chart_debias_event["selection"].get("box", [])
+      if b_boxes and len(b_boxes) > 0 and "x" in b_boxes[0]:
+        x_pts = b_boxes[0]["x"]
+        n_s = round(float(min(x_pts)), 3)
+        n_e = round(float(max(x_pts)), 3)
+        t_key_s = f"as3_{debias_target_plate}_base_s"
+        t_key_e = f"as3_{debias_target_plate}_base_e"
+        t_widget_s = f"as3_bs_{debias_target_plate}"
+        t_widget_e = f"as3_be_{debias_target_plate}"
+        if abs(n_s - st.session_state[t_key_s]) > 0.005 or abs(n_e - st.session_state[t_key_e]) > 0.005:
+          st.session_state[t_key_s] = n_s
+          st.session_state[t_key_e] = n_e
+          st.session_state[t_widget_s] = n_s
+          st.session_state[t_widget_e] = n_e
+          st.rerun()
+
+    # Baseline number confirmation & apply button
+    cb_col1, cb_col2, cb_col3 = st.columns([1.5, 1.5, 1.5])
+    with cb_col1:
+      as3_b_start_in = st.number_input(
+          f"{debias_target_plate} Baseline Start (s):",
+          min_value=k_t_start, max_value=k_t_end, step=0.01, format="%.3f",
+          key=f"as3_bs_{debias_target_plate}"
+      )
+      st.session_state[f"as3_{debias_target_plate}_base_s"] = as3_b_start_in
+    with cb_col2:
+      as3_b_end_in = st.number_input(
+          f"{debias_target_plate} Baseline End (s):",
+          min_value=k_t_start, max_value=k_t_end, step=0.01, format="%.3f",
+          key=f"as3_be_{debias_target_plate}"
+      )
+      st.session_state[f"as3_{debias_target_plate}_base_e"] = as3_b_end_in
+    with cb_col3:
+      st.write("")
+      st.write("")
+      if st.button(f"Apply Zeroing to {debias_target_plate}", type="primary", key=f"as3_apply_btn_{debias_target_plate}"):
+        st.session_state[f"as3_{debias_target_plate}_debias_applied"] = True
+        st.success(f"{debias_target_plate} baseline offset calculated and debiased!")
+        st.rerun()
+
+    st.markdown("---")
+
+    # =============================================================
+    # STEP 3: SELECT TWO FOOTSTRIKES FROM FULL SIGNAL
+    # =============================================================
+    st.markdown("### Step 3: Select Two Footstrikes from Full Signal")
+    st.caption("Drag a box over **two consecutive footstrikes** across the walkway to isolate your analysis window.")
+
+    fig_fs = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=("FP1: Vertical Force (F1Z)", "FP2: Vertical Force (F2Z)")
+    )
     if "F1Z" in raw_fp1.data:
-      fig_overview.add_trace(
-          go.Scatter(x=raw_fp1.time, y=raw_fp1.data["F1Z"], mode="lines", line=dict(color="#3b82f6", width=1.5), name="FP1 Fz"),
-          row=1, col=1
-      )
+      fig_fs.add_trace(go.Scatter(x=raw_fp1.time, y=raw_fp1.data["F1Z"], mode="lines", line=dict(color="#3b82f6", width=1.5), name="FP1 Fz"), row=1, col=1)
     if "F2Z" in raw_fp2.data:
-      fig_overview.add_trace(
-          go.Scatter(x=raw_fp2.time, y=raw_fp2.data["F2Z"], mode="lines", line=dict(color="#22c55e", width=1.5), name="FP2 Fz"),
-          row=2, col=1
-      )
+      fig_fs.add_trace(go.Scatter(x=raw_fp2.time, y=raw_fp2.data["F2Z"], mode="lines", line=dict(color="#22c55e", width=1.5), name="FP2 Fz"), row=2, col=1)
 
     curr_win_s = float(st.session_state["as3_win_s"])
     curr_win_e = float(st.session_state["as3_win_e"])
-    fp1_base_s = float(st.session_state["as3_FP1_base_s"])
-    fp1_base_e = float(st.session_state["as3_FP1_base_e"])
-    fp2_base_s = float(st.session_state["as3_FP2_base_s"])
-    fp2_base_e = float(st.session_state["as3_FP2_base_e"])
 
     for r in [1, 2]:
-      # Stance Window (Yellow)
-      fig_overview.add_vrect(
+      fig_fs.add_vrect(
           x0=curr_win_s, x1=curr_win_e,
-          fillcolor="rgba(234, 179, 8, 0.2)",
+          fillcolor="rgba(234, 179, 8, 0.25)",
           line_width=2, line_dash="dash", line_color="#eab308",
-          annotation_text="2-Strike Window" if r == 1 else "",
+          annotation_text="Two Footstrikes Window" if r == 1 else "",
           annotation_position="top left",
           row=r, col=1
       )
 
-    # Shaded Baseline Windows on Respective Rows
-    fig_overview.add_vrect(
-        x0=fp1_base_s, x1=fp1_base_e,
-        fillcolor="rgba(6, 182, 212, 0.25)",
-        line_width=2, line_dash="dot", line_color="#06b6d4",
-        annotation_text="FP1 Baseline Zero",
-        annotation_position="bottom left",
-        row=1, col=1
+    fig_fs.update_layout(
+        template="plotly_dark", height=420, dragmode="select", hovermode="x unified",
+        margin=dict(l=20, r=20, t=35, b=20),
+        xaxis2=dict(title="Time (s)"), yaxis=dict(title="Force (N)"), yaxis2=dict(title="Force (N)")
     )
 
-    fig_overview.add_vrect(
-        x0=fp2_base_s, x1=fp2_base_e,
-        fillcolor="rgba(217, 70, 239, 0.25)",
-        line_width=2, line_dash="dot", line_color="#d946ef",
-        annotation_text="FP2 Baseline Zero",
-        annotation_position="bottom left",
-        row=2, col=1
+    chart_fs_event = st.plotly_chart(
+        fig_fs, use_container_width=True, on_select="rerun", selection_mode=["box"], key="as3_fs_chart"
     )
 
-    fig_overview.update_layout(
-        template="plotly_dark",
-        height=450,
-        dragmode="select",
-        hovermode="x unified",
-        margin=dict(l=20, r=20, t=40, b=20),
-        xaxis2=dict(title="Time (s)"),
-        yaxis=dict(title="Force (N)"),
-        yaxis2=dict(title="Force (N)"),
-    )
-
-    chart_select = st.plotly_chart(
-        fig_overview,
-        use_container_width=True,
-        on_select="rerun",
-        selection_mode=["box"],
-        key="as3_overview_chart",
-    )
-
-    # Capture mouse box selections from the stacked overview
-    if chart_select and "selection" in chart_select:
-      sel_dict = chart_select["selection"]
-      box_list = sel_dict.get("box", [])
-      if box_list and len(box_list) > 0 and "x" in box_list[0]:
-        x_pts = box_list[0]["x"]
+    # Capture drag box on footstrike isolation graph
+    if chart_fs_event and "selection" in chart_fs_event:
+      fs_boxes = chart_fs_event["selection"].get("box", [])
+      if fs_boxes and len(fs_boxes) > 0 and "x" in fs_boxes[0]:
+        x_pts = fs_boxes[0]["x"]
         n_s = round(float(min(x_pts)), 3)
         n_e = round(float(max(x_pts)), 3)
+        if abs(n_s - st.session_state["as3_win_s"]) > 0.005 or abs(n_e - st.session_state["as3_win_e"]) > 0.005:
+          st.session_state["as3_win_s"] = n_s
+          st.session_state["as3_win_e"] = n_e
+          st.session_state["as3_num_t_s"] = n_s
+          st.session_state["as3_num_t_e"] = n_e
+          st.rerun()
 
-        if graph_select_target == "Two Foot Strikes Window":
-          if abs(n_s - st.session_state["as3_win_s"]) > 0.005 or abs(n_e - st.session_state["as3_win_e"]) > 0.005:
-            st.session_state["as3_win_s"] = n_s
-            st.session_state["as3_win_e"] = n_e
-            st.session_state["as3_num_t_s"] = n_s
-            st.session_state["as3_num_t_e"] = n_e
-            st.rerun()
-        else:
-          target_key_s = f"as3_{base_target_plate}_base_s"
-          target_key_e = f"as3_{base_target_plate}_base_e"
-          target_num_s = f"as3_bs_{base_target_plate}"
-          target_num_e = f"as3_be_{base_target_plate}"
-          if abs(n_s - st.session_state[target_key_s]) > 0.005 or abs(n_e - st.session_state[target_key_e]) > 0.005:
-            st.session_state[target_key_s] = n_s
-            st.session_state[target_key_e] = n_e
-            st.session_state[target_num_s] = n_s
-            st.session_state[target_num_e] = n_e
-            st.rerun()
-
-    # -------------------------------------------------------------
-    # 2. Window Bounds & Target Platform Selection
-    # -------------------------------------------------------------
-    st.markdown("#### 2. Confirm Window Bounds & Target Platform")
-    c_plat, c_win1, c_win2 = st.columns([1.5, 2, 2])
-
-    with c_plat:
+    c_fs_plat, c_fs_s, c_fs_e = st.columns([1.5, 2, 2])
+    with c_fs_plat:
       as3_plate = st.radio(
-          "Target Platform for 6-Component Analysis:",
+          "Target Platform for 6-Component Plotting:",
           ["FP1", "FP2"],
           horizontal=True,
-          key="as3_plat_choice",
+          key="as3_fs_plate_choice"
       )
-
-    raw_base_ts = raw_fp1 if as3_plate == "FP1" else raw_fp2
-    p_num = "1" if as3_plate == "FP1" else "2"
-
-    with c_win1:
+    with c_fs_s:
       as3_t_start = st.number_input(
-          "Two-Strike Window Start (s):",
-          min_value=k_t_start,
-          max_value=k_t_end,
-          step=0.01,
-          format="%.3f",
-          key="as3_num_t_s",
+          "Window Start (s):",
+          min_value=k_t_start, max_value=k_t_end, step=0.01, format="%.3f",
+          key="as3_num_t_s"
       )
       st.session_state["as3_win_s"] = as3_t_start
-
-    with c_win2:
+    with c_fs_e:
       as3_t_end = st.number_input(
-          "Two-Strike Window End (s):",
-          min_value=k_t_start,
-          max_value=k_t_end,
-          step=0.01,
-          format="%.3f",
-          key="as3_num_t_e",
+          "Window End (s):",
+          min_value=k_t_start, max_value=k_t_end, step=0.01, format="%.3f",
+          key="as3_num_t_e"
       )
       st.session_state["as3_win_e"] = as3_t_end
 
     st.markdown("---")
 
-    # -------------------------------------------------------------
-    # 3. Student Processing Decisions (Scaling, Debiasing, Filtering)
-    # -------------------------------------------------------------
-    st.markdown("#### 3. Signal Conditioning Decisions")
-    st.caption(
-        "Configure scaling factors, quiescent baseline debiasing, and low-pass filtering."
-    )
+    # =============================================================
+    # STEP 4: APPLY FILTERING CUTOFF FREQUENCY
+    # =============================================================
+    st.markdown("### Step 4: Apply Filtering Cutoff Frequency")
+    st.caption("Select your low-pass filter algorithm and configure the cutoff frequency (defaulted to 100 Hz).")
 
-    col_proc1, col_proc2, col_proc3 = st.columns([1.2, 1.8, 1.2])
-
-    # A) Calibration / Scaling Option (Defaulted to Unselected)
-    with col_proc1:
-      st.markdown("**A. Unit Scaling & Sign Convention**")
-      apply_scale = st.checkbox(
-          "Scale & Invert Forces (Up/Forward +ve)",
-          value=False,
-          help="Converts voltages to Newtons and aligns polarity with lab axes.",
-          key="as3_scale_cb",
-      )
-      apply_moment_scale = st.checkbox(
-          "Scale Moments (N·m Conversion)",
-          value=False,
-          help="Converts analog moment signals into Newton-meters.",
-          key="as3_mscale_cb",
-      )
-
-    # B) Quiescent Baseline Debiasing Option (Independent for FP1 and FP2)
-    with col_proc2:
-      st.markdown("**B. Baseline Zeroing (De-bias)**")
-      st.info(
-          "👉 **Instruction:** Select a **quiet part of the signal** (an unloaded interval where nobody is standing on the platform) to calculate the zero baseline offset.",
-          icon="ℹ️"
-      )
-
-      # Radio button to toggle which platform is being configured
-      debias_view_plat = st.radio(
-          "Configure Baseline For:",
-          ["FP1", "FP2"],
-          horizontal=True,
-          key="as3_debias_view_plat"
-      )
-
-      apply_as3_debias = st.checkbox(
-          f"Enable Baseline Zeroing for {debias_view_plat}",
-          value=st.session_state[f"as3_{debias_view_plat}_debias"],
-          key=f"as3_{debias_view_plat}_debias_cb"
-      )
-      st.session_state[f"as3_{debias_view_plat}_debias"] = apply_as3_debias
-
-      b_c1, b_c2 = st.columns(2)
-      with b_c1:
-        as3_b_start = st.number_input(
-            f"{debias_view_plat} Quiet Start (s):",
-            min_value=k_t_start,
-            max_value=k_t_end,
-            step=0.01,
-            format="%.3f",
-            disabled=not apply_as3_debias,
-            key=f"as3_bs_{debias_view_plat}",
-        )
-        st.session_state[f"as3_{debias_view_plat}_base_s"] = as3_b_start
-
-      with b_c2:
-        as3_b_end = st.number_input(
-            f"{debias_view_plat} Quiet End (s):",
-            min_value=k_t_start,
-            max_value=k_t_end,
-            step=0.01,
-            format="%.3f",
-            disabled=not apply_as3_debias,
-            key=f"as3_be_{debias_view_plat}",
-        )
-        st.session_state[f"as3_{debias_view_plat}_base_e"] = as3_b_end
-
-    # C) Filtering Option (Defaulted to 100 Hz)
-    with col_proc3:
-      st.markdown("**C. Low-Pass Filtering**")
+    f_col1, f_col2 = st.columns(2)
+    with f_col1:
       as3_filter_mode = st.selectbox(
           "Filter Algorithm:",
           ["Butterworth Low-pass", "None (Raw)"],
           index=0,
-          key="as3_filt_sel",
+          key="as3_filt_sel_step4",
       )
+    with f_col2:
       if as3_filter_mode == "Butterworth Low-pass":
         as3_fc = st.slider(
             "Cutoff Frequency Fc (Hz):",
-            min_value=5,
-            max_value=200,
-            value=100,  # Defaulted to 100 Hz
-            step=5,
-            key="as3_fc_slider",
+            min_value=5, max_value=200, value=100, step=5,
+            key="as3_fc_slider_step4",
         )
       else:
         as3_fc = None
+        st.caption("Displaying unfiltered raw data.")
 
     # -------------------------------------------------------------
-    # 4. Apply Transformations to Data
+    # Compute Pipeline Transformations
     # -------------------------------------------------------------
+    raw_base_ts = raw_fp1 if as3_plate == "FP1" else raw_fp2
+    p_num = "1" if as3_plate == "FP1" else "2"
     fp_work = copy.deepcopy(raw_base_ts)
 
     # 1. Scaling
@@ -1399,28 +1351,26 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       for f_key in [f"F{p_num}X", f"F{p_num}Y", f"F{p_num}Z"]:
         if f_key in fp_work.data:
           fp_work.data[f_key] = fp_work.data[f_key] * 1.0
-
     if apply_moment_scale:
       for m_key in [f"M{p_num}X", f"M{p_num}Y", f"M{p_num}Z"]:
         if m_key in fp_work.data:
           fp_work.data[m_key] = fp_work.data[m_key] * 1.0
 
-    # 2. Debiasing using the selected platform's baseline interval
-    plat_debias_enabled = st.session_state[f"as3_{as3_plate}_debias"]
+    # 2. Debiasing
+    is_debiased_applied = st.session_state[f"as3_{as3_plate}_debias_applied"]
     plat_b_start = st.session_state[f"as3_{as3_plate}_base_s"]
     plat_b_end = st.session_state[f"as3_{as3_plate}_base_e"]
 
-    if plat_debias_enabled and plat_b_end > plat_b_start:
+    if is_debiased_applied and plat_b_end > plat_b_start:
       b_p_s = max(0.0, min(1.0, (plat_b_start - k_t_start) / kin_duration))
       b_p_e = max(0.0, min(1.0, (plat_b_end - k_t_start) / kin_duration))
       b_i_s = int(b_p_s * n_total_fp)
       b_i_e = max(b_i_s + 1, int(b_p_e * n_total_fp))
-
       for k in fp_work.data.keys():
         bias_val = np.nanmean(fp_work.data[k][b_i_s:b_i_e])
         fp_work.data[k] -= bias_val
 
-    # 3. Slice the requested two foot-strike window
+    # 3. Slicing Footstrikes Window
     w_p_s = max(0.0, min(1.0, (as3_t_start - k_t_start) / kin_duration))
     w_p_e = max(0.0, min(1.0, (as3_t_end - k_t_start) / kin_duration))
     w_i_s = int(w_p_s * n_total_fp)
@@ -1437,7 +1387,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     for k in fp_work.data.keys():
       window_processed_ts.data[k] = np.copy(fp_work.data[k][w_i_s:w_i_e])
 
-    # 4. Optional Filtering
+    # 4. Filtering
     if as3_filter_mode == "Butterworth Low-pass" and as3_fc is not None:
       window_filtered_ts = ktk.filters.butter(window_processed_ts, fc=as3_fc)
       window_filtered_ts.time = time_window
@@ -1447,10 +1397,10 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.markdown("---")
 
     # -------------------------------------------------------------
-    # 5. Plot All 6 Components on Separate Graphs
+    # 6-Component Output Display
     # -------------------------------------------------------------
     st.markdown(
-        f"#### 4. Six-Component Kinetic Plots ({as3_plate}: 2 Foot Strikes)"
+        f"#### Six-Component Kinetic Plots ({as3_plate}: 2 Footstrikes)"
     )
 
     component_specs = [
@@ -1507,7 +1457,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         )
         st.plotly_chart(fig_comp, use_container_width=True)
 
- 
+
     # -------------------------------------------------------------
     # 5. Assignment Helper & Theory Explanations
     # -------------------------------------------------------------
