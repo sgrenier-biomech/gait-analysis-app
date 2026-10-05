@@ -1215,7 +1215,515 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     fig_fp1.add_vrect(
         x0=fp1_bs,
         x1=fp1_be,
-        fillcolor="rgba
+        fillcolor="rgba(6, 182, 212, 0.25)",
+        line_width=2,
+        line_dash="dot",
+        line_color="#06b6d4",
+        annotation_text="FP1 Baseline Range",
+        annotation_position="top left",
+    )
+
+    fig_fp1.update_layout(
+        title="Force Platform 1: Vertical Force (F1Z)",
+        template="plotly_dark",
+        height=320,
+        dragmode="zoom" if fp1_mode == "Zoom View" else "select",
+        hovermode="x unified",
+        margin=dict(l=20, r=20, t=35, b=20),
+        xaxis=dict(title="Time (s)"),
+        yaxis=dict(title="Force (N)"),
+        uirevision=f"fp1_rev_{v1}",
+    )
+
+    chart_fp1_event = st.plotly_chart(
+        fig_fp1,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode=["box"],
+        key=f"as3_chart_fp1_{v1}",
+    )
+
+    if (
+        fp1_mode == "Select Debias Range"
+        and chart_fp1_event
+        and "selection" in chart_fp1_event
+    ):
+      boxes = chart_fp1_event["selection"].get("box", [])
+      if boxes and len(boxes) > 0 and "x" in boxes[0]:
+        x_pts = boxes[0]["x"]
+        n_s = round(float(min(x_pts)), 3)
+        n_e = round(float(max(x_pts)), 3)
+        if (
+            abs(n_s - st.session_state["as3_FP1_base_s"]) > 0.005
+            or abs(n_e - st.session_state["as3_FP1_base_e"]) > 0.005
+        ):
+          st.session_state["as3_FP1_base_s"] = n_s
+          st.session_state["as3_FP1_base_e"] = n_e
+          st.session_state["as3_bs_FP1"] = n_s
+          st.session_state["as3_be_FP1"] = n_e
+          st.rerun()
+
+    c1_b1, c1_b2, c1_b3 = st.columns([1.5, 1.5, 1.5])
+    with c1_b1:
+      as3_b_start_fp1 = st.number_input(
+          "FP1 Baseline Start (s):",
+          min_value=k_t_start,
+          max_value=k_t_end,
+          step=0.01,
+          format="%.3f",
+          key="as3_bs_FP1",
+      )
+      st.session_state["as3_FP1_base_s"] = as3_b_start_fp1
+    with c1_b2:
+      as3_b_end_fp1 = st.number_input(
+          "FP1 Baseline End (s):",
+          min_value=k_t_start,
+          max_value=k_t_end,
+          step=0.01,
+          format="%.3f",
+          key="as3_be_FP1",
+      )
+      st.session_state["as3_FP1_base_e"] = as3_b_end_fp1
+    with c1_b3:
+      st.write("")
+      st.write("")
+      if st.button("Apply Zeroing to FP1", type="primary", key="as3_btn_app_fp1"):
+        st.session_state["as3_FP1_debias_applied"] = True
+        st.success("FP1 baseline offset zeroed!")
+        st.rerun()
+
+    st.markdown("---")
+
+    # =============================================================
+    # STEP 2B: BASELINE ZEROING FOR FORCE PLATFORM 2
+    # =============================================================
+    st.markdown("### Step 2b: Baseline Zeroing (De-bias) — Force Platform 2")
+    st.info(
+        "👉 **Instruction for FP2:** Zoom into a quiet, unloaded section of the"
+        " signal where nobody is standing on Plate 2, switch mode to"
+        " **'Select Debias Range'**, drag across the baseline, and click"
+        " **'Apply Zeroing to FP2'**.",
+        icon="ℹ️",
+    )
+
+    v2 = st.session_state["as3_view_ver_FP2"]
+    col_fp2_ctrl, col_fp2_rst = st.columns([3, 1])
+    with col_fp2_ctrl:
+      fp2_mode = st.radio(
+          "FP2 Interaction Tool Mode:",
+          ["Zoom View", "Select Debias Range"],
+          horizontal=True,
+          key=f"as3_fp2_mode_{v2}",
+      )
+    with col_fp2_rst:
+      st.write("")
+      if st.button("Reset FP2 Graph View", key="as3_fp2_rst_btn"):
+        st.session_state["as3_view_ver_FP2"] += 1
+        st.rerun()
+
+    v2 = st.session_state["as3_view_ver_FP2"]
+    fig_fp2 = go.Figure()
+    if "F2Z" in raw_fp2.data:
+      fig_fp2.add_trace(
+          go.Scatter(
+              x=raw_fp2.time,
+              y=raw_fp2.data["F2Z"],
+              mode="lines",
+              line=dict(color="#22c55e", width=1.5),
+              name="FP2 Fz",
+          )
+      )
+
+    fp2_bs = float(st.session_state["as3_FP2_base_s"])
+    fp2_be = float(st.session_state["as3_FP2_base_e"])
+    fig_fp2.add_vrect(
+        x0=fp2_bs,
+        x1=fp2_be,
+        fillcolor="rgba(217, 70, 239, 0.25)",
+        line_width=2,
+        line_dash="dot",
+        line_color="#d946ef",
+        annotation_text="FP2 Baseline Range",
+        annotation_position="top left",
+    )
+
+    fig_fp2.update_layout(
+        title="Force Platform 2: Vertical Force (F2Z)",
+        template="plotly_dark",
+        height=320,
+        dragmode="zoom" if fp2_mode == "Zoom View" else "select",
+        hovermode="x unified",
+        margin=dict(l=20, r=20, t=35, b=20),
+        xaxis=dict(title="Time (s)"),
+        yaxis=dict(title="Force (N)"),
+        uirevision=f"fp2_rev_{v2}",
+    )
+
+    chart_fp2_event = st.plotly_chart(
+        fig_fp2,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode=["box"],
+        key=f"as3_chart_fp2_{v2}",
+    )
+
+    if (
+        fp2_mode == "Select Debias Range"
+        and chart_fp2_event
+        and "selection" in chart_fp2_event
+    ):
+      boxes = chart_fp2_event["selection"].get("box", [])
+      if boxes and len(boxes) > 0 and "x" in boxes[0]:
+        x_pts = boxes[0]["x"]
+        n_s = round(float(min(x_pts)), 3)
+        n_e = round(float(max(x_pts)), 3)
+        if (
+            abs(n_s - st.session_state["as3_FP2_base_s"]) > 0.005
+            or abs(n_e - st.session_state["as3_FP2_base_e"]) > 0.005
+        ):
+          st.session_state["as3_FP2_base_s"] = n_s
+          st.session_state["as3_FP2_base_e"] = n_e
+          st.session_state["as3_bs_FP2"] = n_s
+          st.session_state["as3_be_FP2"] = n_e
+          st.rerun()
+
+    c2_b1, c2_b2, c2_b3 = st.columns([1.5, 1.5, 1.5])
+    with c2_b1:
+      as3_b_start_fp2 = st.number_input(
+          "FP2 Baseline Start (s):",
+          min_value=k_t_start,
+          max_value=k_t_end,
+          step=0.01,
+          format="%.3f",
+          key="as3_bs_FP2",
+      )
+      st.session_state["as3_FP2_base_s"] = as3_b_start_fp2
+    with c2_b2:
+      as3_b_end_fp2 = st.number_input(
+          "FP2 Baseline End (s):",
+          min_value=k_t_start,
+          max_value=k_t_end,
+          step=0.01,
+          format="%.3f",
+          key="as3_be_FP2",
+      )
+      st.session_state["as3_FP2_base_e"] = as3_b_end_fp2
+    with c2_b3:
+      st.write("")
+      st.write("")
+      if st.button("Apply Zeroing to FP2", type="primary", key="as3_btn_app_fp2"):
+        st.session_state["as3_FP2_debias_applied"] = True
+        st.success("FP2 baseline offset zeroed!")
+        st.rerun()
+
+    st.markdown("---")
+
+    # =============================================================
+    # STEP 3: SELECT TWO FOOTSTRIKES FROM FULL SIGNAL
+    # =============================================================
+    st.markdown("### Step 3: Select Two Footstrikes from Full Signal")
+    st.caption(
+        "Drag a box over **two consecutive footstrikes** across the walkway to"
+        " isolate your analysis window."
+    )
+
+    fig_fs = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=(
+            "FP1: Vertical Force (F1Z)",
+            "FP2: Vertical Force (F2Z)",
+        ),
+    )
+    if "F1Z" in raw_fp1.data:
+      fig_fs.add_trace(
+          go.Scatter(
+              x=raw_fp1.time,
+              y=raw_fp1.data["F1Z"],
+              mode="lines",
+              line=dict(color="#3b82f6", width=1.5),
+              name="FP1 Fz",
+          ),
+          row=1,
+          col=1,
+      )
+    if "F2Z" in raw_fp2.data:
+      fig_fs.add_trace(
+          go.Scatter(
+              x=raw_fp2.time,
+              y=raw_fp2.data["F2Z"],
+              mode="lines",
+              line=dict(color="#22c55e", width=1.5),
+              name="FP2 Fz",
+          ),
+          row=2,
+          col=1,
+      )
+
+    curr_win_s = float(st.session_state["as3_win_s"])
+    curr_win_e = float(st.session_state["as3_win_e"])
+
+    for r in [1, 2]:
+      fig_fs.add_vrect(
+          x0=curr_win_s,
+          x1=curr_win_e,
+          fillcolor="rgba(234, 179, 8, 0.25)",
+          line_width=2,
+          line_dash="dash",
+          line_color="#eab308",
+          annotation_text="Two Footstrikes Window" if r == 1 else "",
+          annotation_position="top left",
+          row=r,
+          col=1,
+      )
+
+    fig_fs.update_layout(
+        template="plotly_dark",
+        height=400,
+        dragmode="select",
+        hovermode="x unified",
+        margin=dict(l=20, r=20, t=35, b=20),
+        xaxis2=dict(title="Time (s)"),
+        yaxis=dict(title="Force (N)"),
+        yaxis2=dict(title="Force (N)"),
+    )
+
+    chart_fs_event = st.plotly_chart(
+        fig_fs,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode=["box"],
+        key="as3_fs_chart",
+    )
+
+    if chart_fs_event and "selection" in chart_fs_event:
+      fs_boxes = chart_fs_event["selection"].get("box", [])
+      if fs_boxes and len(fs_boxes) > 0 and "x" in fs_boxes[0]:
+        x_pts = fs_boxes[0]["x"]
+        n_s = round(float(min(x_pts)), 3)
+        n_e = round(float(max(x_pts)), 3)
+        if (
+            abs(n_s - st.session_state["as3_win_s"]) > 0.005
+            or abs(n_e - st.session_state["as3_win_e"]) > 0.005
+        ):
+          st.session_state["as3_win_s"] = n_s
+          st.session_state["as3_win_e"] = n_e
+          st.session_state["as3_num_t_s"] = n_s
+          st.session_state["as3_num_t_e"] = n_e
+          st.rerun()
+
+    c_fs_plat, c_fs_s, c_fs_e = st.columns([1.5, 2, 2])
+    with c_fs_plat:
+      as3_plate = st.radio(
+          "Target Platform for 6-Component Plotting:",
+          ["FP1", "FP2"],
+          horizontal=True,
+          key="as3_fs_plate_choice",
+      )
+    with c_fs_s:
+      as3_t_start = st.number_input(
+          "Window Start (s):",
+          min_value=k_t_start,
+          max_value=k_t_end,
+          step=0.01,
+          format="%.3f",
+          key="as3_num_t_s",
+      )
+      st.session_state["as3_win_s"] = as3_t_start
+    with c_fs_e:
+      as3_t_end = st.number_input(
+          "Window End (s):",
+          min_value=k_t_start,
+          max_value=k_t_end,
+          step=0.01,
+          format="%.3f",
+          key="as3_num_t_e",
+      )
+      st.session_state["as3_win_e"] = as3_t_end
+
+    st.markdown("---")
+
+    # =============================================================
+    # STEP 4: APPLY FILTERING CUTOFF FREQUENCY
+    # =============================================================
+    st.markdown("### Step 4: Apply Filtering Cutoff Frequency")
+    st.caption(
+        "Select your low-pass filter algorithm and configure the cutoff"
+        " frequency (defaulted to 100 Hz)."
+    )
+
+    f_col1, f_col2 = st.columns(2)
+    with f_col1:
+      as3_filter_mode = st.selectbox(
+          "Filter Algorithm:",
+          ["Butterworth Low-pass", "None (Raw)"],
+          index=0,
+          key="as3_filt_sel_step4",
+      )
+    with f_col2:
+      if as3_filter_mode == "Butterworth Low-pass":
+        as3_fc = st.slider(
+            "Cutoff Frequency Fc (Hz):",
+            min_value=5,
+            max_value=200,
+            value=100,
+            step=5,
+            key="as3_fc_slider_step4",
+        )
+      else:
+        as3_fc = None
+        st.caption("Displaying unfiltered raw data.")
+
+    # -------------------------------------------------------------
+    # Compute Pipeline Transformations
+    # -------------------------------------------------------------
+    raw_base_ts = raw_fp1 if as3_plate == "FP1" else raw_fp2
+    p_num = "1" if as3_plate == "FP1" else "2"
+    fp_work = copy.deepcopy(raw_base_ts)
+
+    # 1. Scaling
+    if apply_scale:
+      for f_key in [f"F{p_num}X", f"F{p_num}Y", f"F{p_num}Z"]:
+        if f_key in fp_work.data:
+          fp_work.data[f_key] = fp_work.data[f_key] * 1.0
+    if apply_moment_scale:
+      for m_key in [f"M{p_num}X", f"M{p_num}Y", f"M{p_num}Z"]:
+        if m_key in fp_work.data:
+          fp_work.data[m_key] = fp_work.data[m_key] * 1.0
+
+    # 2. Debiasing using plate-specific baseline interval
+    is_debiased_applied = st.session_state[f"as3_{as3_plate}_debias_applied"]
+    plat_b_start = st.session_state[f"as3_{as3_plate}_base_s"]
+    plat_b_end = st.session_state[f"as3_{as3_plate}_base_e"]
+
+    if is_debiased_applied and plat_b_end > plat_b_start:
+      b_p_s = max(0.0, min(1.0, (plat_b_start - k_t_start) / kin_duration))
+      b_p_e = max(0.0, min(1.0, (plat_b_end - k_t_start) / kin_duration))
+      b_i_s = int(b_p_s * n_total_fp)
+      b_i_e = max(b_i_s + 1, int(b_p_e * n_total_fp))
+      for k in fp_work.data.keys():
+        bias_val = np.nanmean(fp_work.data[k][b_i_s:b_i_e])
+        fp_work.data[k] -= bias_val
+
+    # 3. Slicing Footstrikes Window
+    w_p_s = max(0.0, min(1.0, (as3_t_start - k_t_start) / kin_duration))
+    w_p_e = max(0.0, min(1.0, (as3_t_end - k_t_start) / kin_duration))
+    w_i_s = int(w_p_s * n_total_fp)
+    w_i_e = max(w_i_s + 2, int(w_p_e * n_total_fp))
+
+    n_samples_window = w_i_e - w_i_s
+    time_window = np.linspace(as3_t_start, as3_t_end, n_samples_window)
+
+    window_raw_ts = ktk.TimeSeries(time=time_window)
+    for k in fp_work.data.keys():
+      window_raw_ts.data[k] = np.copy(raw_base_ts.data[k][w_i_s:w_i_e])
+
+    window_processed_ts = ktk.TimeSeries(time=time_window)
+    for k in fp_work.data.keys():
+      window_processed_ts.data[k] = np.copy(fp_work.data[k][w_i_s:w_i_e])
+
+    # 4. Filtering
+    if as3_filter_mode == "Butterworth Low-pass" and as3_fc is not None:
+      window_filtered_ts = ktk.filters.butter(window_processed_ts, fc=as3_fc)
+      window_filtered_ts.time = time_window
+    else:
+      window_filtered_ts = window_processed_ts
+
+    st.markdown("---")
+
+    # -------------------------------------------------------------
+    # 6-Component Output Display
+    # -------------------------------------------------------------
+    st.markdown(f"#### Six-Component Kinetic Plots ({as3_plate}: 2 Footstrikes)")
+
+    component_specs = [
+        (
+            f"F{p_num}X",
+            "Fx: Medio-Lateral Force (Side-to-Side Shear)",
+            "Force (N)",
+            "#ef4444",
+        ),
+        (
+            f"F{p_num}Y",
+            "Fy: Antero-Posterior Force (Braking & Propulsion)",
+            "Force (N)",
+            "#22c55e",
+        ),
+        (
+            f"F{p_num}Z",
+            "Fz: Vertical Ground Reaction Force (Weight Bearing)",
+            "Force (N)",
+            "#3b82f6",
+        ),
+        (
+            f"M{p_num}X",
+            "Mx: Moment about Medio-Lateral Axis",
+            "Moment (N·m)",
+            "#f97316",
+        ),
+        (
+            f"M{p_num}Y",
+            "My: Moment about Antero-Posterior Axis",
+            "Moment (N·m)",
+            "#eab308",
+        ),
+        (
+            f"M{p_num}Z",
+            "Mz: Free Moment about Vertical Axis",
+            "Moment (N·m)",
+            "#a855f7",
+        ),
+    ]
+
+    col_g1, col_g2 = st.columns(2)
+
+    for i, (ch_key, comp_title, y_label, comp_color) in enumerate(
+        component_specs
+    ):
+      target_col = col_g1 if (i % 2 == 0) else col_g2
+      with target_col:
+        fig_comp = go.Figure()
+
+        if ch_key in window_raw_ts.data:
+          fig_comp.add_trace(
+              go.Scatter(
+                  x=window_raw_ts.time,
+                  y=window_raw_ts.data[ch_key],
+                  mode="lines",
+                  name="Unprocessed (Raw)",
+                  line=dict(color="#94a3b8", dash="dot", width=1.5),
+                  opacity=0.6,
+              )
+          )
+
+        if ch_key in window_filtered_ts.data:
+          fig_comp.add_trace(
+              go.Scatter(
+                  x=window_filtered_ts.time,
+                  y=window_filtered_ts.data[ch_key],
+                  mode="lines",
+                  name=(
+                      f"Processed ({as3_fc} Hz)"
+                      if as3_filter_mode == "Butterworth Low-pass"
+                      else "Processed"
+                  ),
+                  line=dict(color=comp_color, width=2.5),
+              )
+          )
+
+        fig_comp.update_layout(
+            title=comp_title,
+            xaxis_title="Time (s)",
+            yaxis_title=y_label,
+            template="plotly_dark",
+            hovermode="x unified",
+            margin=dict(l=20, r=20, t=40, b=20),
+            xaxis=dict(range=[as3_t_start, as3_t_end], autorange=False),
+        )
+        st.plotly_chart(fig_comp, use_container_width=True)
+
 
     # -------------------------------------------------------------
     # 5. Assignment Helper & Theory Explanations
