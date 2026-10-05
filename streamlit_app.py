@@ -1176,7 +1176,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.markdown("### Step 2a: Baseline Zeroing (De-bias) — Force Platform 1")
     st.info(
         "👉 **Instruction for FP1:** While in **'Zoom View'**, drag a box over"
-        " a quiet unloaded section to zoom in. Then switch to **'Select Debias"
+        " a quiet unloaded section to zoom in. Switch to **'Select Debias"
         " Range'** to highlight the exact baseline and click **'Apply Zeroing"
         " to FP1'**.",
         icon="ℹ️",
@@ -1196,8 +1196,12 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       )
     with col_fp1_rst:
       st.write("")
-      if st.button("Reset FP1 Graph View", key="as3_fp1_rst_btn"):
+      if st.button("Reset FP1 Graph & Values", key="as3_fp1_rst_btn"):
         st.session_state["as3_FP1_zoom_range"] = [k_t_start, k_t_end]
+        st.session_state["as3_FP1_base_s"] = round(k_t_start + 0.1, 3)
+        st.session_state["as3_FP1_base_e"] = round(k_t_start + 0.4, 3)
+        st.session_state.pop(f"as3_bs_FP1_{v1}", None)
+        st.session_state.pop(f"as3_be_FP1_{v1}", None)
         st.session_state["as3_view_ver_FP1"] += 1
         st.rerun()
 
@@ -1233,7 +1237,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         title="Force Platform 1: Vertical Force (F1Z)",
         template="plotly_dark",
         height=320,
-        dragmode="select",  # Keep select mode so mouse drags are always captured by Streamlit
+        dragmode="select",
         hovermode="x unified",
         margin=dict(l=20, r=20, t=35, b=20),
         xaxis=dict(
@@ -1261,7 +1265,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         n_e = round(float(max(x_pts)), 3)
 
         if fp1_mode == "Zoom View":
-          # User dragged to zoom in: save the viewport window
           if (
               abs(n_s - fp1_curr_zoom[0]) > 0.005
               or abs(n_e - fp1_curr_zoom[1]) > 0.005
@@ -1269,15 +1272,14 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             st.session_state["as3_FP1_zoom_range"] = [n_s, n_e]
             st.rerun()
         else:
-          # User dragged to select debias baseline
           if (
               abs(n_s - st.session_state["as3_FP1_base_s"]) > 0.005
               or abs(n_e - st.session_state["as3_FP1_base_e"]) > 0.005
           ):
             st.session_state["as3_FP1_base_s"] = n_s
             st.session_state["as3_FP1_base_e"] = n_e
-            st.session_state["as3_bs_FP1"] = n_s
-            st.session_state["as3_be_FP1"] = n_e
+            st.session_state[f"as3_bs_FP1_{v1}"] = n_s
+            st.session_state[f"as3_be_FP1_{v1}"] = n_e
             st.rerun()
 
     c1_b1, c1_b2, c1_b3 = st.columns([1.5, 1.5, 1.5])
@@ -1286,9 +1288,10 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           "FP1 Baseline Start (s):",
           min_value=k_t_start,
           max_value=k_t_end,
+          value=float(st.session_state["as3_FP1_base_s"]),
           step=0.01,
           format="%.3f",
-          key="as3_bs_FP1",
+          key=f"as3_bs_FP1_{v1}",
       )
       st.session_state["as3_FP1_base_s"] = as3_b_start_fp1
     with c1_b2:
@@ -1296,17 +1299,16 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           "FP1 Baseline End (s):",
           min_value=k_t_start,
           max_value=k_t_end,
+          value=float(st.session_state["as3_FP1_base_e"]),
           step=0.01,
           format="%.3f",
-          key="as3_be_FP1",
+          key=f"as3_be_FP1_{v1}",
       )
       st.session_state["as3_FP1_base_e"] = as3_b_end_fp1
     with c1_b3:
       st.write("")
       st.write("")
-      if st.button(
-          "Apply Zeroing to FP1", type="primary", key="as3_btn_app_fp1"
-      ):
+      if st.button("Apply Zeroing to FP1", type="primary", key="as3_btn_app_fp1"):
         st.session_state["as3_FP1_debias_applied"] = True
         st.success("FP1 baseline offset zeroed!")
         st.rerun()
@@ -1319,7 +1321,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.markdown("### Step 2b: Baseline Zeroing (De-bias) — Force Platform 2")
     st.info(
         "👉 **Instruction for FP2:** While in **'Zoom View'**, drag a box over"
-        " a quiet unloaded section to zoom in. Then switch to **'Select Debias"
+        " a quiet unloaded section to zoom in. Switch to **'Select Debias"
         " Range'** to highlight the exact baseline and click **'Apply Zeroing"
         " to FP2'**.",
         icon="ℹ️",
@@ -1339,248 +1341,11 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       )
     with col_fp2_rst:
       st.write("")
-      if st.button("Reset FP2 Graph View", key="as3_fp2_rst_btn"):
+      if st.button("Reset FP2 Graph & Values", key="as3_fp2_rst_btn"):
         st.session_state["as3_FP2_zoom_range"] = [k_t_start, k_t_end]
-        st.session_state["as3_view_ver_FP2"] += 1
-        st.rerun()
-
-    v2 = st.session_state["as3_view_ver_FP2"]
-    fig_fp2 = go.Figure()
-    if "F2Z" in raw_fp2.data:
-      fig_fp2.add_trace(
-          go.Scatter(
-              x=raw_fp2.time,
-              y=raw_fp2.data["F2Z"],
-              mode="lines",
-              line=dict(color="#22c55e", width=1.5),
-              name="FP2 Fz",
-          )
-      )
-
-    fp2_bs = float(st.session_state["as3_FP2_base_s"])
-    fp2_be = float(st.session_state["as3_FP2_base_e"])
-    fig_fp2.add_vrect(
-        x0=fp2_bs,
-        x1=fp2_be,
-        fillcolor="rgba(217, 70, 239, 0.25)",
-        line_width=2,
-        line_dash="dot",
-        line_color="#d946ef",
-        annotation_text="FP2 Baseline Range",
-        annotation_position="top left",
-    )
-
-    fp2_curr_zoom = st.session_state["as3_FP2_zoom_range"]
-
-    fig_fp2.update_layout(
-        title="Force Platform 2: Vertical Force (F2Z)",
-        template="plotly_dark",
-        height=320,
-        dragmode="select",
-        hovermode="x unified",
-        margin=dict(l=20, r=20, t=35, b=20),
-        xaxis=dict(
-            title="Time (s)",
-            range=fp2_curr_zoom,
-            autorange=False,
-        ),
-        yaxis=dict(title="Force (N)"),
-        uirevision=f"fp2_rev_{v2}",
-    )
-
-    chart_fp2_event = st.plotly_chart(
-        fig_fp2,
-        use_container_width=True,
-        on_select="rerun",
-        selection_mode=["box"],
-        key=f"as3_chart_fp2_{v2}",
-    )
-
-    if chart_fp2_event and "selection" in chart_fp2_event:
-      boxes = chart_fp2_event["selection"].get("box", [])
-      if boxes and len(boxes) > 0 and "x" in boxes[0]:
-        x_pts = boxes[0]["x"]
-        n_s = round(float(min(x_pts)), 3)
-        n_e = round(float(max(x_pts)), 3)
-
-        if fp2_mode == "Zoom View":
-          # User dragged to zoom in: save the viewport window
-          if (
-              abs(n_s - fp2_curr_zoom[0]) > 0.005
-              or abs(n_e - fp2_curr_zoom[1]) > 0.005
-          ):
-            st.session_state["as3_FP2_zoom_range"] = [n_s, n_e]
-            st.rerun()
-        else:
-          # User dragged to select debias baseline
-          if (
-              abs(n_s - st.session_state["as3_FP2_base_s"]) > 0.005
-              or abs(n_e - st.session_state["as3_FP2_base_e"]) > 0.005
-          ):
-            st.session_state["as3_FP2_base_s"] = n_s
-            st.session_state["as3_FP2_base_e"] = n_e
-            st.session_state["as3_bs_FP2"] = n_s
-            st.session_state["as3_be_FP2"] = n_e
-            st.rerun()
-
-    c2_b1, c2_b2, c2_b3 = st.columns([1.5, 1.5, 1.5])
-    with c2_b1:
-      as3_b_start_fp2 = st.number_input(
-          "FP2 Baseline Start (s):",
-          min_value=k_t_start,
-          max_value=k_t_end,
-          step=0.01,
-          format="%.3f",
-          key="as3_bs_FP2",
-      )
-      st.session_state["as3_FP2_base_s"] = as3_b_start_fp2
-    with c2_b2:
-      as3_b_end_fp2 = st.number_input(
-          "FP2 Baseline End (s):",
-          min_value=k_t_start,
-          max_value=k_t_end,
-          step=0.01,
-          format="%.3f",
-          key="as3_be_FP2",
-      )
-      st.session_state["as3_FP2_base_e"] = as3_b_end_fp2
-    with c2_b3:
-      st.write("")
-      st.write("")
-      if st.button(
-          "Apply Zeroing to FP2", type="primary", key="as3_btn_app_fp2"
-      ):
-        st.session_state["as3_FP2_debias_applied"] = True
-        st.success("FP2 baseline offset zeroed!")
-        st.rerun()
-
-    # =============================================================
-    # STEP 3: SELECT TWO FOOTSTRIKES FROM FULL SIGNAL
-    # =============================================================
-    st.markdown("### Step 3: Select Two Footstrikes from Full Signal")
-    st.caption(
-        "Drag a box over **two consecutive footstrikes** across the walkway to"
-        " isolate your analysis window."
-    )
-
-    fig_fs = make_subplots(
-        rows=2,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        subplot_titles=(
-            "FP1: Vertical Force (F1Z)",
-            "FP2: Vertical Force (F2Z)",
-        ),
-    )
-    if "F1Z" in raw_fp1.data:
-      fig_fs.add_trace(
-          go.Scatter(
-              x=raw_fp1.time,
-              y=raw_fp1.data["F1Z"],
-              mode="lines",
-              line=dict(color="#3b82f6", width=1.5),
-              name="FP1 Fz",
-          ),
-          row=1,
-          col=1,
-      )
-    if "F2Z" in raw_fp2.data:
-      fig_fs.add_trace(
-          go.Scatter(
-              x=raw_fp2.time,
-              y=raw_fp2.data["F2Z"],
-              mode="lines",
-              line=dict(color="#22c55e", width=1.5),
-              name="FP2 Fz",
-          ),
-          row=2,
-          col=1,
-      )
-
-    curr_win_s = float(st.session_state["as3_win_s"])
-    curr_win_e = float(st.session_state["as3_win_e"])
-
-    for r in [1, 2]:
-      fig_fs.add_vrect(
-          x0=curr_win_s,
-          x1=curr_win_e,
-          fillcolor="rgba(234, 179, 8, 0.25)",
-          line_width=2,
-          line_dash="dash",
-          line_color="#eab308",
-          annotation_text="Two Footstrikes Window" if r == 1 else "",
-          annotation_position="top left",
-          row=r,
-          col=1,
-      )
-
-    fig_fs.update_layout(
-        template="plotly_dark",
-        height=400,
-        dragmode="select",
-        hovermode="x unified",
-        margin=dict(l=20, r=20, t=35, b=20),
-        xaxis2=dict(title="Time (s)"),
-        yaxis=dict(title="Force (N)"),
-        yaxis2=dict(title="Force (N)"),
-    )
-
-    chart_fs_event = st.plotly_chart(
-        fig_fs,
-        use_container_width=True,
-        on_select="rerun",
-        selection_mode=["box"],
-        key="as3_fs_chart",
-    )
-
-    if chart_fs_event and "selection" in chart_fs_event:
-      fs_boxes = chart_fs_event["selection"].get("box", [])
-      if fs_boxes and len(fs_boxes) > 0 and "x" in fs_boxes[0]:
-        x_pts = fs_boxes[0]["x"]
-        n_s = round(float(min(x_pts)), 3)
-        n_e = round(float(max(x_pts)), 3)
-        if (
-            abs(n_s - st.session_state["as3_win_s"]) > 0.005
-            or abs(n_e - st.session_state["as3_win_e"]) > 0.005
-        ):
-          st.session_state["as3_win_s"] = n_s
-          st.session_state["as3_win_e"] = n_e
-          st.session_state["as3_num_t_s"] = n_s
-          st.session_state["as3_num_t_e"] = n_e
-          st.rerun()
-
-    c_fs_plat, c_fs_s, c_fs_e = st.columns([1.5, 2, 2])
-    with c_fs_plat:
-      as3_plate = st.radio(
-          "Target Platform for 6-Component Plotting:",
-          ["FP1", "FP2"],
-          horizontal=True,
-          key="as3_fs_plate_choice",
-      )
-    with c_fs_s:
-      as3_t_start = st.number_input(
-          "Window Start (s):",
-          min_value=k_t_start,
-          max_value=k_t_end,
-          step=0.01,
-          format="%.3f",
-          key="as3_num_t_s",
-      )
-      st.session_state["as3_win_s"] = as3_t_start
-    with c_fs_e:
-      as3_t_end = st.number_input(
-          "Window End (s):",
-          min_value=k_t_start,
-          max_value=k_t_end,
-          step=0.01,
-          format="%.3f",
-          key="as3_num_t_e",
-      )
-      st.session_state["as3_win_e"] = as3_t_end
-
-    st.markdown("---")
-
+        st.session_state["as3_FP2_base_s"] = round(k_t_start + 0.8, 3)
+        st.session_state["as3_FP2_base_e"] = round(k_t_start + 1.1, 3)
+        st.session_state.pop(f"
     # =============================================================
     # STEP 4: APPLY FILTERING CUTOFF FREQUENCY
     # =============================================================
