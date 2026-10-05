@@ -1079,8 +1079,9 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
     st.markdown(
         """
-        In this assignment, isolate a window containing **exactly two foot strikes** (either two strikes on one platform or one strike on each platform).
-        Plot all 6 kinetic components ($F_x, F_y, F_z, M_x, M_y, M_z$) comparing raw vs. processed traces, and explain the physical necessity of scaling, debiasing, and filtering.
+        Inspect the full-trial stacked force plate traces below to locate the foot strikes. 
+        Select a window containing **two foot strikes** (either two strikes of the same foot on one plate, or alternating strikes across FP1 and FP2), 
+        configure your signal conditioning choices, and analyze all 6 kinetic components ($F_x, F_y, F_z, M_x, M_y, M_z$).
         """
     )
 
@@ -1089,86 +1090,168 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     k_t_end = float(angles_ts.time[-1])
     kin_duration = k_t_end - k_t_start
 
+    raw_fp1 = st.session_state["FP1_raw"]
+    raw_fp2 = st.session_state["FP2_raw"]
+    n_total_fp = len(raw_fp1.time)
+
     # -------------------------------------------------------------
-    # 1. Platform & Window Selection (Two Foot Strikes)
+    # 1. Full-Trial Stacked Overview Graphs (FP1 over FP2)
     # -------------------------------------------------------------
-    st.markdown("#### 1. Target Force Platform & Stance Window")
+    st.markdown("#### 1. Full-Trial Platform Overview (Locate Foot Strikes)")
+    st.caption(
+        "Use the graph below to spot foot contacts. Drag a box across two foot strikes to update the window, or enter timestamps below."
+    )
+
+    # State initialization for Assignment 3 window
+    if "as3_win_s" not in st.session_state or st.session_state["as3_win_s"] < k_t_start:
+      st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
+    if "as3_win_e" not in st.session_state or st.session_state["as3_win_e"] <= st.session_state["as3_win_s"]:
+      st.session_state["as3_win_e"] = round(min(k_t_end, st.session_state["as3_win_s"] + 1.8), 3)
+
+    curr_win_s = float(st.session_state["as3_win_s"])
+    curr_win_e = float(st.session_state["as3_win_e"])
+
+    from plotly.subplots import make_subplots
+    fig_overview = make_subplots(
+        rows=2, cols=1, 
+        shared_xaxes=True, 
+        vertical_spacing=0.08,
+        subplot_titles=("Force Platform 1: Vertical Force (F1Z)", "Force Platform 2: Vertical Force (F2Z)")
+    )
+
+    # Trace for FP1 Fz
+    if "F1Z" in raw_fp1.data:
+      fig_overview.add_trace(
+          go.Scatter(x=raw_fp1.time, y=raw_fp1.data["F1Z"], mode="lines", line=dict(color="#3b82f6", width=1.5), name="FP1 Fz"),
+          row=1, col=1
+      )
+
+    # Trace for FP2 Fz
+    if "F2Z" in raw_fp2.data:
+      fig_overview.add_trace(
+          go.Scatter(x=raw_fp2.time, y=raw_fp2.data["F2Z"], mode="lines", line=dict(color="#22c55e", width=1.5), name="FP2 Fz"),
+          row=2, col=1
+      )
+
+    # Add shaded window box across both subplots
+    for r in [1, 2]:
+      fig_overview.add_vrect(
+          x0=curr_win_s, x1=curr_win_e,
+          fillcolor="rgba(234, 179, 8, 0.2)",
+          line_width=2, line_dash="dash", line_color="#eab308",
+          annotation_text="Selected 2-Strike Window" if r == 1 else "",
+          annotation_position="top left",
+          row=r, col=1
+      )
+
+    fig_overview.update_layout(
+        template="plotly_dark",
+        height=450,
+        dragmode="select",
+        hovermode="x unified",
+        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis2=dict(title="Time (s)"),
+        yaxis=dict(title="Force (N)"),
+        yaxis2=dict(title="Force (N)"),
+    )
+
+    chart_select = st.plotly_chart(
+        fig_overview, 
+        use_container_width=True, 
+        on_select="rerun", 
+        selection_mode=["box"], 
+        key="as3_overview_chart"
+    )
+
+    # Capture mouse box selections from the stacked overview
+    if chart_select and "selection" in chart_select:
+      sel_dict = chart_select["selection"]
+      box_list = sel_dict.get("box", [])
+      if box_list and len(box_list) > 0 and "x" in box_list[0]:
+        x_pts = box_list[0]["x"]
+        n_s = round(float(min(x_pts)), 3)
+        n_e = round(float(max(x_pts)), 3)
+        if abs(n_s - st.session_state["as3_win_s"]) > 0.005 or abs(n_e - st.session_state["as3_win_e"]) > 0.005:
+          st.session_state["as3_win_s"] = n_s
+          st.session_state["as3_win_e"] = n_e
+          st.rerun()
+
+    # -------------------------------------------------------------
+    # 2. Window Bounds & Target Platform Selection
+    # -------------------------------------------------------------
+    st.markdown("#### 2. Confirm Window Bounds & Target Platform")
     c_plat, c_win1, c_win2 = st.columns([1.5, 2, 2])
 
     with c_plat:
       as3_plate = st.radio(
-          "Select Force Platform:",
+          "Target Platform for 6-Component Analysis:",
           ["FP1", "FP2"],
           horizontal=True,
           key="as3_plat_choice",
       )
 
-    raw_base_ts = (
-        st.session_state["FP1_raw"]
-        if as3_plate == "FP1"
-        else st.session_state["FP2_raw"]
-    )
+    raw_base_ts = raw_fp1 if as3_plate == "FP1" else raw_fp2
     p_num = "1" if as3_plate == "FP1" else "2"
-    n_total_fp = len(raw_base_ts.time)
 
     with c_win1:
       as3_t_start = st.number_input(
           "Two-Strike Window Start (s):",
           min_value=k_t_start,
           max_value=k_t_end,
-          value=round(k_t_start + 0.5, 3),
+          value=float(st.session_state["as3_win_s"]),
           step=0.01,
           format="%.3f",
-          key="as3_t_s",
+          key="as3_num_t_s",
       )
+      st.session_state["as3_win_s"] = as3_t_start
+
     with c_win2:
       as3_t_end = st.number_input(
           "Two-Strike Window End (s):",
           min_value=k_t_start,
           max_value=k_t_end,
-          value=round(min(k_t_end, as3_t_start + 2.0), 3),
+          value=float(st.session_state["as3_win_e"]),
           step=0.01,
           format="%.3f",
-          key="as3_t_e",
+          key="as3_num_t_e",
       )
+      st.session_state["as3_win_e"] = as3_t_end
 
     st.markdown("---")
 
     # -------------------------------------------------------------
-    # 2. Student Processing Decisions (Scaling, Debiasing, Filtering)
+    # 3. Student Processing Decisions (Scaling, Debiasing, Filtering)
     # -------------------------------------------------------------
-    st.markdown("#### 2. Signal Processing Decisions")
+    st.markdown("#### 3. Signal Conditioning Decisions")
     st.caption(
-        "Configure scaling factors, quiescent baseline debiasing, and low-pass"
-        " filtering."
+        "Configure scaling factors, quiescent baseline debiasing, and low-pass filtering."
     )
 
     col_proc1, col_proc2, col_proc3 = st.columns(3)
 
     # A) Calibration / Scaling Option
     with col_proc1:
-      st.markdown("**A. Unit Scaling / Sign Convention**")
+      st.markdown("**A. Unit Scaling & Sign Convention**")
       apply_scale = st.checkbox(
-          "Invert & Scale Forces (-1000 N/V)",
+          "Scale & Invert Forces (Up/Forward +ve)",
           value=True,
-          help=(
-              "Inverts vertical/shear forces to follow standard lab"
-              " coordinates (Upward/Forward positive)."
-          ),
+          help="Converts voltages to Newtons and aligns polarity with lab axes.",
           key="as3_scale_cb",
       )
       apply_moment_scale = st.checkbox(
           "Scale Moments (N·m Conversion)",
           value=True,
-          help="Converts analog moment millivolts/bits into Newton-meters.",
+          help="Converts analog moment signals into Newton-meters.",
           key="as3_mscale_cb",
       )
 
     # B) Quiescent Baseline Debiasing Option
-    with col_proc1 if False else col_proc2:
-      st.markdown("**B. Baseline Debiasing (Zeroing)**")
+    with col_proc2:
+      st.markdown("**B. Baseline Zeroing (De-bias)**")
       apply_as3_debias = st.checkbox(
-          "Enable Quiescent Zeroing", value=True, key="as3_debias_cb"
+          "Enable Quiescent Zeroing",
+          value=True,
+          key="as3_debias_cb"
       )
 
       b_def_start = k_t_start + 0.1
@@ -1216,7 +1299,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         as3_fc = None
 
     # -------------------------------------------------------------
-    # 3. Apply Transformations to Data
+    # 4. Apply Transformations to Data
     # -------------------------------------------------------------
     fp_work = copy.deepcopy(raw_base_ts)
 
@@ -1269,66 +1352,29 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.markdown("---")
 
     # -------------------------------------------------------------
-    # 4. Plot All 6 Components on Separate Graphs
+    # 5. Plot All 6 Components on Separate Graphs
     # -------------------------------------------------------------
     st.markdown(
-        f"#### 3. Six-Component Kinetic Plots ({as3_plate}: 2 Foot Strikes)"
+        f"#### 4. Six-Component Kinetic Plots ({as3_plate}: 2 Foot Strikes)"
     )
 
     component_specs = [
-        # (Key, Title, Unit, Color)
-        (
-            f"F{p_num}X",
-            "Fx: Medio-Lateral Force (Side-to-Side Shear)",
-            "Force (N)",
-            "#ef4444",
-        ),
-        (
-            f"F{p_num}Y",
-            "Fy: Antero-Posterior Force (Braking & Propulsion)",
-            "Force (N)",
-            "#22c55e",
-        ),
-        (
-            f"F{p_num}Z",
-            "Fz: Vertical Ground Reaction Force (Weight Bearing)",
-            "Force (N)",
-            "#3b82f6",
-        ),
-        (
-            f"M{p_num}X",
-            "Mx: Moment about Medio-Lateral Axis (Sagittal Inversion/Eversion)",
-            "Moment (N·m)",
-            "#f97316",
-        ),
-        (
-            f"M{p_num}Y",
-            (
-                "My: Moment about Antero-Posterior Axis (Frontal"
-                " Plantar/Dorsiflexion)"
-            ),
-            "Moment (N·m)",
-            "#eab308",
-        ),
-        (
-            f"M{p_num}Z",
-            "Mz: Free Moment about Vertical Axis (Transverse Torsion)",
-            "Moment (N·m)",
-            "#a855f7",
-        ),
+        (f"F{p_num}X", "Fx: Medio-Lateral Force (Side-to-Side Shear)", "Force (N)", "#ef4444"),
+        (f"F{p_num}Y", "Fy: Antero-Posterior Force (Braking & Propulsion)", "Force (N)", "#22c55e"),
+        (f"F{p_num}Z", "Fz: Vertical Ground Reaction Force (Weight Bearing)", "Force (N)", "#3b82f6"),
+        (f"M{p_num}X", "Mx: Moment about Medio-Lateral Axis", "Moment (N·m)", "#f97316"),
+        (f"M{p_num}Y", "My: Moment about Antero-Posterior Axis", "Moment (N·m)", "#eab308"),
+        (f"M{p_num}Z", "Mz: Free Moment about Vertical Axis", "Moment (N·m)", "#a855f7"),
     ]
 
     col_g1, col_g2 = st.columns(2)
 
-    for i, (ch_key, comp_title, y_label, comp_color) in enumerate(
-        component_specs
-    ):
+    for i, (ch_key, comp_title, y_label, comp_color) in enumerate(component_specs):
       target_col = col_g1 if (i % 2 == 0) else col_g2
       with target_col:
         fig_comp = go.Figure()
 
         if ch_key in window_raw_ts.data:
-          # Raw unscaled/un-debiased trace (dashed)
           fig_comp.add_trace(
               go.Scatter(
                   x=window_raw_ts.time,
@@ -1341,7 +1387,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           )
 
         if ch_key in window_filtered_ts.data:
-          # Processed trace (solid)
           fig_comp.add_trace(
               go.Scatter(
                   x=window_filtered_ts.time,
@@ -1367,6 +1412,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         )
         st.plotly_chart(fig_comp, use_container_width=True)
 
+
     # -------------------------------------------------------------
     # 5. Assignment Helper & Theory Explanations
     # -------------------------------------------------------------
@@ -1386,18 +1432,18 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         ### 2. Explanation of Signal Conditioning Steps:
 
         #### **A. Unit Scaling & Sign Conventions**
-        * **What it is:** Transducers output raw analog signals in millivolts ($\text{mV}$) or ADC binary counts. 
+        * **What is scaling?** Transducers output raw analog signals in millivolts ($\text{mV}$) or ADC binary counts. 
         * **How the app does it:** 
         * **Why it is important:** 
 
         #### **B. Quiescent Baseline Debiasing (Zeroing)**
-        * **What it is:** Removing DC electrical offset voltages.
+        * **What debiasing?** Removing DC electrical offset voltages.
         * **How the app does it:** 
           $$x_{\text{debiased}}(t) = x(t) - \mu_{\text{baseline}}$$
         * **Why it is important:** 
 
         #### **C. Low-Pass Filtering**
-        * **What it is:** 
+        * **What is low pass filtering?** 
         * **How the app does it:** 
         * **Why it is important:** 
         """
