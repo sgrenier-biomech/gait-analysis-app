@@ -629,10 +629,11 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   st.success("Analysis completed! Begin with Assignment 1 below.")
   st.markdown("---")
 
-  # Define dynamic tabs that unlock sequentially
+# Define dynamic tabs that unlock sequentially
   tab_labels = [
       "Assignment 1: Raw Signals",
       "Assignment 2: CoM & GRF",
+      "Assignment 3: 6-DOF GRF Analysis",
       "Step 1: Kinematics & Cycle Selection",
   ]
   if st.session_state.get("cycle_locked", False):
@@ -1069,10 +1070,342 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     st.markdown("---")
 
+# =========================================================================
+  # ASSIGNMENT 3: 6-COMPONENT GROUND REACTION FORCES & MOMENTS
+  # =========================================================================
+  with active_tabs[2]:
+    st.subheader(
+        "Assignment 3: 6-DOF Ground Reaction Force & Moment Processing"
+    )
+    st.markdown(
+        """
+        In this assignment, isolate a window containing **exactly two foot strikes** (either two strikes on one platform or one strike on each platform).
+        Plot all 6 kinetic components ($F_x, F_y, F_z, M_x, M_y, M_z$) comparing raw vs. processed traces, and explain the physical necessity of scaling, debiasing, and filtering.
+        """
+    )
+
+    angles_ts = st.session_state["angles"]
+    k_t_start = float(angles_ts.time[0])
+    k_t_end = float(angles_ts.time[-1])
+    kin_duration = k_t_end - k_t_start
+
+    # -------------------------------------------------------------
+    # 1. Platform & Window Selection (Two Foot Strikes)
+    # -------------------------------------------------------------
+    st.markdown("#### 1. Target Force Platform & Stance Window")
+    c_plat, c_win1, c_win2 = st.columns([1.5, 2, 2])
+
+    with c_plat:
+      as3_plate = st.radio(
+          "Select Force Platform:",
+          ["FP1", "FP2"],
+          horizontal=True,
+          key="as3_plat_choice",
+      )
+
+    raw_base_ts = (
+        st.session_state["FP1_raw"]
+        if as3_plate == "FP1"
+        else st.session_state["FP2_raw"]
+    )
+    p_num = "1" if as3_plate == "FP1" else "2"
+    n_total_fp = len(raw_base_ts.time)
+
+    with c_win1:
+      as3_t_start = st.number_input(
+          "Two-Strike Window Start (s):",
+          min_value=k_t_start,
+          max_value=k_t_end,
+          value=round(k_t_start + 0.5, 3),
+          step=0.01,
+          format="%.3f",
+          key="as3_t_s",
+      )
+    with c_win2:
+      as3_t_end = st.number_input(
+          "Two-Strike Window End (s):",
+          min_value=k_t_start,
+          max_value=k_t_end,
+          value=round(min(k_t_end, as3_t_start + 2.0), 3),
+          step=0.01,
+          format="%.3f",
+          key="as3_t_e",
+      )
+
+    st.markdown("---")
+
+    # -------------------------------------------------------------
+    # 2. Student Processing Decisions (Scaling, Debiasing, Filtering)
+    # -------------------------------------------------------------
+    st.markdown("#### 2. Signal Processing Decisions")
+    st.caption(
+        "Configure scaling factors, quiescent baseline debiasing, and low-pass"
+        " filtering."
+    )
+
+    col_proc1, col_proc2, col_proc3 = st.columns(3)
+
+    # A) Calibration / Scaling Option
+    with col_proc1:
+      st.markdown("**A. Unit Scaling / Sign Convention**")
+      apply_scale = st.checkbox(
+          "Invert & Scale Forces (-1000 N/V)",
+          value=True,
+          help=(
+              "Inverts vertical/shear forces to follow standard lab"
+              " coordinates (Upward/Forward positive)."
+          ),
+          key="as3_scale_cb",
+      )
+      apply_moment_scale = st.checkbox(
+          "Scale Moments (N·m Conversion)",
+          value=True,
+          help="Converts analog moment millivolts/bits into Newton-meters.",
+          key="as3_mscale_cb",
+      )
+
+    # B) Quiescent Baseline Debiasing Option
+    with col_proc1 if False else col_proc2:
+      st.markdown("**B. Baseline Debiasing (Zeroing)**")
+      apply_as3_debias = st.checkbox(
+          "Enable Quiescent Zeroing", value=True, key="as3_debias_cb"
+      )
+
+      b_def_start = k_t_start + 0.1
+      b_def_end = k_t_start + 0.4
+      as3_b_start = st.number_input(
+          "Baseline Interval Start (s):",
+          min_value=k_t_start,
+          max_value=k_t_end,
+          value=round(b_def_start, 3),
+          step=0.01,
+          format="%.3f",
+          disabled=not apply_as3_debias,
+          key="as3_bs",
+      )
+      as3_b_end = st.number_input(
+          "Baseline Interval End (s):",
+          min_value=k_t_start,
+          max_value=k_t_end,
+          value=round(b_def_end, 3),
+          step=0.01,
+          format="%.3f",
+          disabled=not apply_as3_debias,
+          key="as3_be",
+      )
+
+    # C) Filtering Option
+    with col_proc3:
+      st.markdown("**C. Low-Pass Filtering**")
+      as3_filter_mode = st.selectbox(
+          "Filter Algorithm:",
+          ["Butterworth Low-pass", "None (Raw)"],
+          index=0,
+          key="as3_filt_sel",
+      )
+      if as3_filter_mode == "Butterworth Low-pass":
+        as3_fc = st.slider(
+            "Cutoff Frequency Fc (Hz):",
+            min_value=5,
+            max_value=150,
+            value=20,
+            step=5,
+            key="as3_fc_slider",
+        )
+      else:
+        as3_fc = None
+
+    # -------------------------------------------------------------
+    # 3. Apply Transformations to Data
+    # -------------------------------------------------------------
+    fp_work = copy.deepcopy(raw_base_ts)
+
+    # 1. Scaling
+    if apply_scale:
+      for f_key in [f"F{p_num}X", f"F{p_num}Y", f"F{p_num}Z"]:
+        if f_key in fp_work.data:
+          fp_work.data[f_key] = fp_work.data[f_key] * 1.0
+
+    if apply_moment_scale:
+      for m_key in [f"M{p_num}X", f"M{p_num}Y", f"M{p_num}Z"]:
+        if m_key in fp_work.data:
+          fp_work.data[m_key] = fp_work.data[m_key] * 1.0
+
+    # 2. Debiasing
+    if apply_as3_debias and as3_b_end > as3_b_start:
+      b_p_s = max(0.0, min(1.0, (as3_b_start - k_t_start) / kin_duration))
+      b_p_e = max(0.0, min(1.0, (as3_b_end - k_t_start) / kin_duration))
+      b_i_s = int(b_p_s * n_total_fp)
+      b_i_e = max(b_i_s + 1, int(b_p_e * n_total_fp))
+
+      for k in fp_work.data.keys():
+        bias_val = np.nanmean(fp_work.data[k][b_i_s:b_i_e])
+        fp_work.data[k] -= bias_val
+
+    # 3. Slice the requested two foot-strike window
+    w_p_s = max(0.0, min(1.0, (as3_t_start - k_t_start) / kin_duration))
+    w_p_e = max(0.0, min(1.0, (as3_t_end - k_t_start) / kin_duration))
+    w_i_s = int(w_p_s * n_total_fp)
+    w_i_e = max(w_i_s + 2, int(w_p_e * n_total_fp))
+
+    n_samples_window = w_i_e - w_i_s
+    time_window = np.linspace(as3_t_start, as3_t_end, n_samples_window)
+
+    window_raw_ts = ktk.TimeSeries(time=time_window)
+    for k in fp_work.data.keys():
+      window_raw_ts.data[k] = np.copy(raw_base_ts.data[k][w_i_s:w_i_e])
+
+    window_processed_ts = ktk.TimeSeries(time=time_window)
+    for k in fp_work.data.keys():
+      window_processed_ts.data[k] = np.copy(fp_work.data[k][w_i_s:w_i_e])
+
+    # 4. Optional Filtering
+    if as3_filter_mode == "Butterworth Low-pass" and as3_fc is not None:
+      window_filtered_ts = ktk.filters.butter(window_processed_ts, fc=as3_fc)
+      window_filtered_ts.time = time_window
+    else:
+      window_filtered_ts = window_processed_ts
+
+    st.markdown("---")
+
+    # -------------------------------------------------------------
+    # 4. Plot All 6 Components on Separate Graphs
+    # -------------------------------------------------------------
+    st.markdown(
+        f"#### 3. Six-Component Kinetic Plots ({as3_plate}: 2 Foot Strikes)"
+    )
+
+    component_specs = [
+        # (Key, Title, Unit, Color)
+        (
+            f"F{p_num}X",
+            "Fx: Medio-Lateral Force (Side-to-Side Shear)",
+            "Force (N)",
+            "#ef4444",
+        ),
+        (
+            f"F{p_num}Y",
+            "Fy: Antero-Posterior Force (Braking & Propulsion)",
+            "Force (N)",
+            "#22c55e",
+        ),
+        (
+            f"F{p_num}Z",
+            "Fz: Vertical Ground Reaction Force (Weight Bearing)",
+            "Force (N)",
+            "#3b82f6",
+        ),
+        (
+            f"M{p_num}X",
+            "Mx: Moment about Medio-Lateral Axis (Sagittal Inversion/Eversion)",
+            "Moment (N·m)",
+            "#f97316",
+        ),
+        (
+            f"M{p_num}Y",
+            (
+                "My: Moment about Antero-Posterior Axis (Frontal"
+                " Plantar/Dorsiflexion)"
+            ),
+            "Moment (N·m)",
+            "#eab308",
+        ),
+        (
+            f"M{p_num}Z",
+            "Mz: Free Moment about Vertical Axis (Transverse Torsion)",
+            "Moment (N·m)",
+            "#a855f7",
+        ),
+    ]
+
+    col_g1, col_g2 = st.columns(2)
+
+    for i, (ch_key, comp_title, y_label, comp_color) in enumerate(
+        component_specs
+    ):
+      target_col = col_g1 if (i % 2 == 0) else col_g2
+      with target_col:
+        fig_comp = go.Figure()
+
+        if ch_key in window_raw_ts.data:
+          # Raw unscaled/un-debiased trace (dashed)
+          fig_comp.add_trace(
+              go.Scatter(
+                  x=window_raw_ts.time,
+                  y=window_raw_ts.data[ch_key],
+                  mode="lines",
+                  name="Unprocessed (Raw)",
+                  line=dict(color="#94a3b8", dash="dot", width=1.5),
+                  opacity=0.6,
+              )
+          )
+
+        if ch_key in window_filtered_ts.data:
+          # Processed trace (solid)
+          fig_comp.add_trace(
+              go.Scatter(
+                  x=window_filtered_ts.time,
+                  y=window_filtered_ts.data[ch_key],
+                  mode="lines",
+                  name=(
+                      f"Processed ({as3_fc} Hz)"
+                      if as3_filter_mode == "Butterworth Low-pass"
+                      else "Processed"
+                  ),
+                  line=dict(color=comp_color, width=2.5),
+              )
+          )
+
+        fig_comp.update_layout(
+            title=comp_title,
+            xaxis_title="Time (s)",
+            yaxis_title=y_label,
+            template="plotly_dark",
+            hovermode="x unified",
+            margin=dict(l=20, r=20, t=40, b=20),
+            xaxis=dict(range=[as3_t_start, as3_t_end], autorange=False),
+        )
+        st.plotly_chart(fig_comp, use_container_width=True)
+
+    # -------------------------------------------------------------
+    # 5. Assignment Helper & Theory Explanations
+    # -------------------------------------------------------------
+    with st.expander("💡 Lab Report Guide: Answers to Assignment 3 Questions"):
+      st.markdown(
+          r"""
+        ### 1. What Each of the 6 Components Represents:
+        * **$F_x$ (Medio-Lateral Force):** Lateral and medial shear forces exerted on the platform.
+        * **$F_y$ (Antero-Posterior Force):** The anterior/posterior shear force.
+        * **$F_z$ (Vertical Force):** Total vertical load bearing. 
+        * **$M_x$ (Frontal Moment):** Moment about the X axis, produced primarily by the vertical load acting at an offset distance along the Y axis ($F_z \times d_y$).
+        * **$M_y$ (Sagittal Moment):** Moment about the Y axis, produced by the vertical load offset laterally along the X axis ($F_z \times d_x$).
+        * **$M_z$ (Free Vertical Moment / Torque):** 
+
+        ---
+
+        ### 2. Explanation of Signal Conditioning Steps:
+
+        #### **A. Unit Scaling & Sign Conventions**
+        * **What it is:** Transducers output raw analog signals in millivolts ($\text{mV}$) or ADC binary counts. 
+        * **How the app does it:** 
+        * **Why it is important:** 
+
+        #### **B. Quiescent Baseline Debiasing (Zeroing)**
+        * **What it is:** Removing DC electrical offset voltages.
+        * **How the app does it:** 
+          $$x_{\text{debiased}}(t) = x(t) - \mu_{\text{baseline}}$$
+        * **Why it is important:** 
+
+        #### **C. Low-Pass Filtering**
+        * **What it is:** 
+        * **How the app does it:** 
+        * **Why it is important:** 
+        """
+      )
   # =========================================================================
   # STEP 1: KINEMATICS & GAIT CYCLE IDENTIFICATION
   # =========================================================================
-  with active_tabs[2]:
+  with active_tabs[3]:
     st.subheader("Step 1: Identify and Isolate One Gait Cycle")
     st.caption(
         "Inspect sagittal kinematics. Drag a box across one gait cycle (heel"
@@ -1243,7 +1576,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # STEP 2: GRF DECISIONS (INDEPENDENT FP1 & FP2 ZEROING)
   # =========================================================================
   if st.session_state.get("cycle_locked", False) and len(active_tabs) > 3:
-    with active_tabs[3]:
+    with active_tabs[4]:
       st.subheader("Step 2: Ground Reaction Force (GRF) Processing Decisions")
       st.caption(
           "Configure baseline zeroing and filtering for each force plate"
@@ -1451,7 +1784,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # STEP 3: COP & BUTTERFLY PLOT
   # =========================================================================
   if st.session_state.get("filter_locked", False) and len(active_tabs) > 4:
-    with active_tabs[4]:
+    with active_tabs[5]:
       st.subheader("Step 3: Center of Pressure (COP) Analysis")
       chosen_plate = st.session_state.get("chosen_plate", "FP1")
       fc_val = st.session_state.get("chosen_fc", 100)
