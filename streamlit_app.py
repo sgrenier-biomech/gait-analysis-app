@@ -127,10 +127,20 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
 
   segments = []
   for group_name, info in interconnections.items():
-    color = info.get("Color", "#00ffff")
-    for link in info["Links"]:
-      segments.append({"color": color, "markers": link})
+    raw_color = info.get("Color", (0.0, 1.0, 1.0))
 
+    # Convert (R, G, B) float tuple (0.0 - 1.0) to hex format "#rrggbb"
+    if isinstance(raw_color, (tuple, list)):
+      r = int(round(max(0.0, min(1.0, raw_color[0])) * 255))
+      g = int(round(max(0.0, min(1.0, raw_color[1])) * 255))
+      b = int(round(max(0.0, min(1.0, raw_color[2])) * 255))
+      color_str = f"#{r:02x}{g:02x}{b:02x}"
+    else:
+      color_str = str(raw_color)
+
+    for link in info["Links"]:
+      segments.append({"color": color_str, "markers": link})
+      
   marker_dict = {}
   for m_name, m_data in markers.data.items():
     downsampled = m_data[::step, :3] * scale
