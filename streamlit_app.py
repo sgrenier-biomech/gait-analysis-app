@@ -1257,48 +1257,72 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     # =============================================================
     st.markdown("### Step 2a: Baseline Zeroing (De-bias) — Force Platform 1")
     st.info(
-        "👉 **Instruction for FP1:** While in **'Zoom View'**, drag a box over"
-        " a quiet unloaded section to zoom in. Switch to **'Select Debias"
-        " Range'** to highlight the exact baseline and click **'Apply Zeroing"
-        " to FP1'**.",
+        "👉 **Instruction for FP1:** Select the force components to process. While in **'Zoom View'**, drag a box over"
+        " a quiet unloaded section to zoom in. Switch to **'Select Debias Range'** to highlight the exact baseline and click"
+        " **'Apply Zeroing to FP1'**.",
         icon="ℹ️",
     )
 
+    # Component Selection for FP1
+    fp1_available = [k for k in ["F1X", "F1Y", "F1Z"] if k in raw_fp1.data]
+    if "as3_fp1_components" not in st.session_state:
+        st.session_state["as3_fp1_components"] = fp1_available
+
+    col_fp1_comp, col_fp1_ctrl, col_fp1_rst = st.columns([2, 2.5, 1.5])
+    with col_fp1_comp:
+        chosen_fp1_comps = st.multiselect(
+            "FP1 Components to Inspect & Zero:",
+            options=fp1_available,
+            default=st.session_state["as3_fp1_components"],
+            key="as3_fp1_comp_sel",
+        )
+        st.session_state["as3_fp1_components"] = chosen_fp1_comps
+
     if "as3_FP1_zoom_range" not in st.session_state:
-      st.session_state["as3_FP1_zoom_range"] = [k_t_start, k_t_end]
+        st.session_state["as3_FP1_zoom_range"] = [k_t_start, k_t_end]
+    if "as3_view_ver_FP1" not in st.session_state:
+        st.session_state["as3_view_ver_FP1"] = 0
+    if "as3_FP1_base_s" not in st.session_state:
+        st.session_state["as3_FP1_base_s"] = round(k_t_start + 0.1, 3)
+    if "as3_FP1_base_e" not in st.session_state:
+        st.session_state["as3_FP1_base_e"] = round(k_t_start + 0.4, 3)
 
     v1 = st.session_state["as3_view_ver_FP1"]
-    col_fp1_ctrl, col_fp1_rst = st.columns([3, 1])
+
     with col_fp1_ctrl:
-      fp1_mode = st.radio(
-          "FP1 Interaction Tool Mode:",
-          ["Zoom View", "Select Debias Range"],
-          horizontal=True,
-          key=f"as3_fp1_mode_{v1}",
-      )
+        fp1_mode = st.radio(
+            "FP1 Interaction Tool Mode:",
+            ["Zoom View", "Select Debias Range"],
+            horizontal=True,
+            key=f"as3_fp1_mode_{v1}",
+        )
     with col_fp1_rst:
-      st.write("")
-      if st.button("Reset FP1 Graph & Values", key="as3_fp1_rst_btn"):
-        st.session_state["as3_FP1_zoom_range"] = [k_t_start, k_t_end]
-        st.session_state["as3_FP1_base_s"] = round(k_t_start + 0.1, 3)
-        st.session_state["as3_FP1_base_e"] = round(k_t_start + 0.4, 3)
-        st.session_state.pop(f"as3_bs_FP1_{v1}", None)
-        st.session_state.pop(f"as3_be_FP1_{v1}", None)
-        st.session_state["as3_view_ver_FP1"] += 1
-        st.rerun()
+        st.write("")
+        if st.button("Reset FP1 Graph & Values", key="as3_fp1_rst_btn"):
+            st.session_state["as3_FP1_zoom_range"] = [k_t_start, k_t_end]
+            st.session_state["as3_FP1_base_s"] = round(k_t_start + 0.1, 3)
+            st.session_state["as3_FP1_base_e"] = round(k_t_start + 0.4, 3)
+            st.session_state.pop("as3_fp1_debiased_data", None)
+            st.session_state["as3_FP1_debias_applied"] = False
+            st.session_state.pop(f"as3_bs_FP1_{v1}", None)
+            st.session_state.pop(f"as3_be_FP1_{v1}", None)
+            st.session_state["as3_view_ver_FP1"] += 1
+            st.rerun()
 
     v1 = st.session_state["as3_view_ver_FP1"]
     fig_fp1 = go.Figure()
-    if "F1Z" in raw_fp1.data:
-      fig_fp1.add_trace(
-          go.Scatter(
-              x=raw_fp1.time,
-              y=raw_fp1.data["F1Z"],
-              mode="lines",
-              line=dict(color="#3b82f6", width=1.5),
-              name="FP1 Fz",
-          )
-      )
+    comp_colors = {"F1X": "#ef4444", "F1Y": "#10b981", "F1Z": "#3b82f6", "F2X": "#f97316", "F2Y": "#a855f7", "F2Z": "#22c55e"}
+
+    for ch in chosen_fp1_comps:
+        fig_fp1.add_trace(
+            go.Scatter(
+                x=raw_fp1.time,
+                y=raw_fp1.data[ch],
+                mode="lines",
+                line=dict(color=comp_colors.get(ch, "#38bdf8"), width=1.5),
+                name=f"FP1 {ch}",
+            )
+        )
 
     fp1_bs = float(st.session_state["as3_FP1_base_s"])
     fp1_be = float(st.session_state["as3_FP1_base_e"])
@@ -1316,7 +1340,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     fp1_curr_zoom = st.session_state["as3_FP1_zoom_range"]
 
     fig_fp1.update_layout(
-        title="Force Platform 1: Vertical Force (F1Z)",
+        title=f"Force Platform 1: {' & '.join(chosen_fp1_comps) if chosen_fp1_comps else 'No Components Selected'}",
         template="plotly_dark",
         height=320,
         dragmode="select",
@@ -1340,60 +1364,67 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
 
     if chart_fp1_event and "selection" in chart_fp1_event:
-      boxes = chart_fp1_event["selection"].get("box", [])
-      if boxes and len(boxes) > 0 and "x" in boxes[0]:
-        x_pts = boxes[0]["x"]
-        n_s = round(float(min(x_pts)), 3)
-        n_e = round(float(max(x_pts)), 3)
+        boxes = chart_fp1_event["selection"].get("box", [])
+        if boxes and len(boxes) > 0 and "x" in boxes[0]:
+            x_pts = boxes[0]["x"]
+            n_s = round(float(min(x_pts)), 3)
+            n_e = round(float(max(x_pts)), 3)
 
-        if fp1_mode == "Zoom View":
-          if (
-              abs(n_s - fp1_curr_zoom[0]) > 0.005
-              or abs(n_e - fp1_curr_zoom[1]) > 0.005
-          ):
-            st.session_state["as3_FP1_zoom_range"] = [n_s, n_e]
-            st.rerun()
-        else:
-          if (
-              abs(n_s - st.session_state["as3_FP1_base_s"]) > 0.005
-              or abs(n_e - st.session_state["as3_FP1_base_e"]) > 0.005
-          ):
-            st.session_state["as3_FP1_base_s"] = n_s
-            st.session_state["as3_FP1_base_e"] = n_e
-            st.session_state[f"as3_bs_FP1_{v1}"] = n_s
-            st.session_state[f"as3_be_FP1_{v1}"] = n_e
-            st.rerun()
+            if fp1_mode == "Zoom View":
+                if (
+                    abs(n_s - fp1_curr_zoom[0]) > 0.005
+                    or abs(n_e - fp1_curr_zoom[1]) > 0.005
+                ):
+                    st.session_state["as3_FP1_zoom_range"] = [n_s, n_e]
+                    st.rerun()
+            else:
+                if (
+                    abs(n_s - st.session_state["as3_FP1_base_s"]) > 0.005
+                    or abs(n_e - st.session_state["as3_FP1_base_e"]) > 0.005
+                ):
+                    st.session_state["as3_FP1_base_s"] = n_s
+                    st.session_state["as3_FP1_base_e"] = n_e
+                    st.session_state[f"as3_bs_FP1_{v1}"] = n_s
+                    st.session_state[f"as3_be_FP1_{v1}"] = n_e
+                    st.rerun()
 
     c1_b1, c1_b2, c1_b3 = st.columns([1.5, 1.5, 1.5])
     with c1_b1:
-      as3_b_start_fp1 = st.number_input(
-          "FP1 Baseline Start (s):",
-          min_value=k_t_start,
-          max_value=k_t_end,
-          value=float(st.session_state["as3_FP1_base_s"]),
-          step=0.01,
-          format="%.3f",
-          key=f"as3_bs_FP1_{v1}",
-      )
-      st.session_state["as3_FP1_base_s"] = as3_b_start_fp1
+        as3_b_start_fp1 = st.number_input(
+            "FP1 Baseline Start (s):",
+            min_value=k_t_start,
+            max_value=k_t_end,
+            value=float(st.session_state["as3_FP1_base_s"]),
+            step=0.01,
+            format="%.3f",
+            key=f"as3_bs_FP1_{v1}",
+        )
+        st.session_state["as3_FP1_base_s"] = as3_b_start_fp1
     with c1_b2:
-      as3_b_end_fp1 = st.number_input(
-          "FP1 Baseline End (s):",
-          min_value=k_t_start,
-          max_value=k_t_end,
-          value=float(st.session_state["as3_FP1_base_e"]),
-          step=0.01,
-          format="%.3f",
-          key=f"as3_be_FP1_{v1}",
-      )
-      st.session_state["as3_FP1_base_e"] = as3_b_end_fp1
+        as3_b_end_fp1 = st.number_input(
+            "FP1 Baseline End (s):",
+            min_value=k_t_start,
+            max_value=k_t_end,
+            value=float(st.session_state["as3_FP1_base_e"]),
+            step=0.01,
+            format="%.3f",
+            key=f"as3_be_FP1_{v1}",
+        )
+        st.session_state["as3_FP1_base_e"] = as3_b_end_fp1
     with c1_b3:
-      st.write("")
-      st.write("")
-      if st.button("Apply Zeroing to FP1", type="primary", key="as3_btn_app_fp1"):
-        st.session_state["as3_FP1_debias_applied"] = True
-        st.success("FP1 baseline offset zeroed!")
-        st.rerun()
+        st.write("")
+        st.write("")
+        if st.button("Apply Zeroing to FP1", type="primary", key="as3_btn_app_fp1"):
+            base_mask_1 = (raw_fp1.time >= as3_b_start_fp1) & (raw_fp1.time <= as3_b_end_fp1)
+            debiased_fp1 = {}
+            for ch in ["F1X", "F1Y", "F1Z"]:
+                if ch in raw_fp1.data:
+                    offset = float(np.mean(raw_fp1.data[ch][base_mask_1])) if np.any(base_mask_1) else 0.0
+                    debiased_fp1[ch] = raw_fp1.data[ch] - offset
+            st.session_state["as3_fp1_debiased_data"] = debiased_fp1
+            st.session_state["as3_FP1_debias_applied"] = True
+            st.success("FP1 baseline offset zeroed for all components!")
+            st.rerun()
 
     st.markdown("---")
 
@@ -1402,48 +1433,71 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     # =============================================================
     st.markdown("### Step 2b: Baseline Zeroing (De-bias) — Force Platform 2")
     st.info(
-        "👉 **Instruction for FP2:** While in **'Zoom View'**, drag a box over"
-        " a quiet unloaded section to zoom in. Switch to **'Select Debias"
-        " Range'** to highlight the exact baseline and click **'Apply Zeroing"
-        " to FP2'**.",
+        "👉 **Instruction for FP2:** Select the force components to process. While in **'Zoom View'**, drag a box over"
+        " a quiet unloaded section to zoom in. Switch to **'Select Debias Range'** to highlight the exact baseline and click"
+        " **'Apply Zeroing to FP2'**.",
         icon="ℹ️",
     )
 
+    # Component Selection for FP2
+    fp2_available = [k for k in ["F2X", "F2Y", "F2Z"] if k in raw_fp2.data]
+    if "as3_fp2_components" not in st.session_state:
+        st.session_state["as3_fp2_components"] = fp2_available
+
+    col_fp2_comp, col_fp2_ctrl, col_fp2_rst = st.columns([2, 2.5, 1.5])
+    with col_fp2_comp:
+        chosen_fp2_comps = st.multiselect(
+            "FP2 Components to Inspect & Zero:",
+            options=fp2_available,
+            default=st.session_state["as3_fp2_components"],
+            key="as3_fp2_comp_sel",
+        )
+        st.session_state["as3_fp2_components"] = chosen_fp2_comps
+
     if "as3_FP2_zoom_range" not in st.session_state:
-      st.session_state["as3_FP2_zoom_range"] = [k_t_start, k_t_end]
+        st.session_state["as3_FP2_zoom_range"] = [k_t_start, k_t_end]
+    if "as3_view_ver_FP2" not in st.session_state:
+        st.session_state["as3_view_ver_FP2"] = 0
+    if "as3_FP2_base_s" not in st.session_state:
+        st.session_state["as3_FP2_base_s"] = round(k_t_start + 0.8, 3)
+    if "as3_FP2_base_e" not in st.session_state:
+        st.session_state["as3_FP2_base_e"] = round(k_t_start + 1.1, 3)
 
     v2 = st.session_state["as3_view_ver_FP2"]
-    col_fp2_ctrl, col_fp2_rst = st.columns([3, 1])
+
     with col_fp2_ctrl:
-      fp2_mode = st.radio(
-          "FP2 Interaction Tool Mode:",
-          ["Zoom View", "Select Debias Range"],
-          horizontal=True,
-          key=f"as3_fp2_mode_{v2}",
-      )
+        fp2_mode = st.radio(
+            "FP2 Interaction Tool Mode:",
+            ["Zoom View", "Select Debias Range"],
+            horizontal=True,
+            key=f"as3_fp2_mode_{v2}",
+        )
     with col_fp2_rst:
-      st.write("")
-      if st.button("Reset FP2 Graph & Values", key="as3_fp2_rst_btn"):
-        st.session_state["as3_FP2_zoom_range"] = [k_t_start, k_t_end]
-        st.session_state["as3_FP2_base_s"] = round(k_t_start + 0.8, 3)
-        st.session_state["as3_FP2_base_e"] = round(k_t_start + 1.1, 3)
-        st.session_state.pop(f"as3_bs_FP2_{v2}", None)
-        st.session_state.pop(f"as3_be_FP2_{v2}", None)
-        st.session_state["as3_view_ver_FP2"] += 1
-        st.rerun()
+        st.write("")
+        if st.button("Reset FP2 Graph & Values", key="as3_fp2_rst_btn"):
+            st.session_state["as3_FP2_zoom_range"] = [k_t_start, k_t_end]
+            st.session_state["as3_FP2_base_s"] = round(k_t_start + 0.8, 3)
+            st.session_state["as3_FP2_base_e"] = round(k_t_start + 1.1, 3)
+            st.session_state.pop("as3_fp2_debiased_data", None)
+            st.session_state["as3_FP2_debias_applied"] = False
+            st.session_state.pop(f"as3_bs_FP2_{v2}", None)
+            st.session_state.pop(f"as3_be_FP2_{v2}", None)
+            st.session_state["as3_view_ver_FP2"] += 1
+            st.rerun()
 
     v2 = st.session_state["as3_view_ver_FP2"]
     fig_fp2 = go.Figure()
-    if "F2Z" in raw_fp2.data:
-      fig_fp2.add_trace(
-          go.Scatter(
-              x=raw_fp2.time,
-              y=raw_fp2.data["F2Z"],
-              mode="lines",
-              line=dict(color="#22c55e", width=1.5),
-              name="FP2 Fz",
-          )
-      )
+
+    for ch in chosen_fp2_comps:
+        fig_fp2.add_trace(
+            go.Scatter(
+                x=raw_fp2.time,
+                y=raw_fp2.data[ch],
+                mode="lines",
+                line=dict(color=comp_colors.get(ch, "#4ade80"), width=1.5),
+                name=f"FP2 {ch}",
+            )
+        )
 
     fp2_bs = float(st.session_state["as3_FP2_base_s"])
     fp2_be = float(st.session_state["as3_FP2_base_e"])
@@ -1461,7 +1515,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     fp2_curr_zoom = st.session_state["as3_FP2_zoom_range"]
 
     fig_fp2.update_layout(
-        title="Force Platform 2: Vertical Force (F2Z)",
+        title=f"Force Platform 2: {' & '.join(chosen_fp2_comps) if chosen_fp2_comps else 'No Components Selected'}",
         template="plotly_dark",
         height=320,
         dragmode="select",
@@ -1485,96 +1539,106 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
 
     if chart_fp2_event and "selection" in chart_fp2_event:
-      boxes = chart_fp2_event["selection"].get("box", [])
-      if boxes and len(boxes) > 0 and "x" in boxes[0]:
-        x_pts = boxes[0]["x"]
-        n_s = round(float(min(x_pts)), 3)
-        n_e = round(float(max(x_pts)), 3)
+        boxes = chart_fp2_event["selection"].get("box", [])
+        if boxes and len(boxes) > 0 and "x" in boxes[0]:
+            x_pts = boxes[0]["x"]
+            n_s = round(float(min(x_pts)), 3)
+            n_e = round(float(max(x_pts)), 3)
 
-        if fp2_mode == "Zoom View":
-          if (
-              abs(n_s - fp2_curr_zoom[0]) > 0.005
-              or abs(n_e - fp2_curr_zoom[1]) > 0.005
-          ):
-            st.session_state["as3_FP2_zoom_range"] = [n_s, n_e]
-            st.rerun()
-        else:
-          if (
-              abs(n_s - st.session_state["as3_FP2_base_s"]) > 0.005
-              or abs(n_e - st.session_state["as3_FP2_base_e"]) > 0.005
-          ):
-            st.session_state["as3_FP2_base_s"] = n_s
-            st.session_state["as3_FP2_base_e"] = n_e
-            st.session_state[f"as3_bs_FP2_{v2}"] = n_s
-            st.session_state[f"as3_be_FP2_{v2}"] = n_e
-            st.rerun()
+            if fp2_mode == "Zoom View":
+                if (
+                    abs(n_s - fp2_curr_zoom[0]) > 0.005
+                    or abs(n_e - fp2_curr_zoom[1]) > 0.005
+                ):
+                    st.session_state["as3_FP2_zoom_range"] = [n_s, n_e]
+                    st.rerun()
+            else:
+                if (
+                    abs(n_s - st.session_state["as3_FP2_base_s"]) > 0.005
+                    or abs(n_e - st.session_state["as3_FP2_base_e"]) > 0.005
+                ):
+                    st.session_state["as3_FP2_base_s"] = n_s
+                    st.session_state["as3_FP2_base_e"] = n_e
+                    st.session_state[f"as3_bs_FP2_{v2}"] = n_s
+                    st.session_state[f"as3_be_FP2_{v2}"] = n_e
+                    st.rerun()
 
     c2_b1, c2_b2, c2_b3 = st.columns([1.5, 1.5, 1.5])
     with c2_b1:
-      as3_b_start_fp2 = st.number_input(
-          "FP2 Baseline Start (s):",
-          min_value=k_t_start,
-          max_value=k_t_end,
-          value=float(st.session_state["as3_FP2_base_s"]),
-          step=0.01,
-          format="%.3f",
-          key=f"as3_bs_FP2_{v2}",
-      )
-      st.session_state["as3_FP2_base_s"] = as3_b_start_fp2
+        as3_b_start_fp2 = st.number_input(
+            "FP2 Baseline Start (s):",
+            min_value=k_t_start,
+            max_value=k_t_end,
+            value=float(st.session_state["as3_FP2_base_s"]),
+            step=0.01,
+            format="%.3f",
+            key=f"as3_bs_FP2_{v2}",
+        )
+        st.session_state["as3_FP2_base_e"] = as3_b_start_fp2
     with c2_b2:
-      as3_b_end_fp2 = st.number_input(
-          "FP2 Baseline End (s):",
-          min_value=k_t_start,
-          max_value=k_t_end,
-          value=float(st.session_state["as3_FP2_base_e"]),
-          step=0.01,
-          format="%.3f",
-          key=f"as3_be_FP2_{v2}",
-      )
-      st.session_state["as3_FP2_base_e"] = as3_b_end_fp2
+        as3_b_end_fp2 = st.number_input(
+            "FP2 Baseline End (s):",
+            min_value=k_t_start,
+            max_value=k_t_end,
+            value=float(st.session_state["as3_FP2_base_e"]),
+            step=0.01,
+            format="%.3f",
+            key=f"as3_be_FP2_{v2}",
+        )
+        st.session_state["as3_FP2_base_e"] = as3_b_end_fp2
     with c2_b3:
-      st.write("")
-      st.write("")
-      if st.button("Apply Zeroing to FP2", type="primary", key="as3_btn_app_fp2"):
-        st.session_state["as3_FP2_debias_applied"] = True
-        st.success("FP2 baseline offset zeroed!")
-        st.rerun()
+        st.write("")
+        st.write("")
+        if st.button("Apply Zeroing to FP2", type="primary", key="as3_btn_app_fp2"):
+            base_mask_2 = (raw_fp2.time >= as3_b_start_fp2) & (raw_fp2.time <= as3_b_end_fp2)
+            debiased_fp2 = {}
+            for ch in ["F2X", "F2Y", "F2Z"]:
+                if ch in raw_fp2.data:
+                    offset = float(np.mean(raw_fp2.data[ch][base_mask_2])) if np.any(base_mask_2) else 0.0
+                    debiased_fp2[ch] = raw_fp2.data[ch] - offset
+            st.session_state["as3_fp2_debiased_data"] = debiased_fp2
+            st.session_state["as3_FP2_debias_applied"] = True
+            st.success("FP2 baseline offset zeroed for all components!")
+            st.rerun()
 
     st.markdown("---")
 
-# =============================================================
+    # =============================================================
     # STEP 3: SELECT TWO FOOTSTRIKES FROM FULL SIGNAL
     # =============================================================
     st.markdown("### Step 3: Select Two Footstrikes from Full Signal")
     st.caption(
-        "Use **'Zoom View'** to get a closer look at the steps, or switch to"
-        " **'Select Footstrikes Window'** to isolate two footstrikes. The"
-        " graph automatically updates to focus on your selection."
+        "Displaying the chosen components from Steps 2a and 2b (debiased if zeroing was applied)."
+        " Use **'Zoom View'** to inspect, or **'Select Footstrikes Window'** to define the analysis window."
     )
 
     if "as3_fs_view_ver" not in st.session_state:
-      st.session_state["as3_fs_view_ver"] = 0
+        st.session_state["as3_fs_view_ver"] = 0
     if "as3_fs_zoom_range" not in st.session_state:
-      st.session_state["as3_fs_zoom_range"] = [k_t_start, k_t_end]
+        st.session_state["as3_fs_zoom_range"] = [k_t_start, k_t_end]
+    if "as3_win_s" not in st.session_state:
+        st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
+    if "as3_win_e" not in st.session_state:
+        st.session_state["as3_win_e"] = round(min(k_t_end, k_t_start + 2.3), 3)
 
     v_fs = st.session_state["as3_fs_view_ver"]
 
     col_fs_ctrl, col_fs_rst = st.columns([3, 1])
     with col_fs_ctrl:
-      fs_tool_mode = st.radio(
-          "Footstrike Selection Tool Mode:",
-          ["Zoom View", "Select Footstrikes Window"],
-          horizontal=True,
-          key=f"as3_fs_tool_mode_{v_fs}",
-      )
+        fs_tool_mode = st.radio(
+            "Footstrike Selection Tool Mode:",
+            ["Zoom View", "Select Footstrikes Window"],
+            horizontal=True,
+            key=f"as3_fs_tool_mode_{v_fs}",
+        )
     with col_fs_rst:
-      st.write("")
-      if st.button("Reset Footstrikes View", key="as3_fs_rst_btn"):
-        st.session_state["as3_fs_zoom_range"] = [k_t_start, k_t_end]
-        st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
-        st.session_state["as3_win_e"] = round(min(k_t_end, k_t_start + 2.3), 3)
-        st.session_state["as3_fs_view_ver"] += 1
-        st.rerun()
+        st.write("")
+        if st.button("Reset Footstrikes View", key="as3_fs_rst_btn"):
+            st.session_state["as3_fs_zoom_range"] = [k_t_start, k_t_end]
+            st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
+            st.session_state["as3_win_e"] = round(min(k_t_end, k_t_start + 2.3), 3)
+            st.session_state["as3_fs_view_ver"] += 1
+            st.rerun()
 
     v_fs = st.session_state["as3_fs_view_ver"]
     fig_fs = make_subplots(
@@ -1583,57 +1647,65 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         shared_xaxes=True,
         vertical_spacing=0.08,
         subplot_titles=(
-            "FP1: Vertical Force (F1Z)",
-            "FP2: Vertical Force (F2Z)",
+            "FP1 Components" + (" (Debiased)" if st.session_state.get("as3_FP1_debias_applied") else " (Raw)"),
+            "FP2 Components" + (" (Debiased)" if st.session_state.get("as3_FP2_debias_applied") else " (Raw)"),
         ),
     )
-    if "F1Z" in raw_fp1.data:
-      fig_fs.add_trace(
-          go.Scatter(
-              x=raw_fp1.time,
-              y=raw_fp1.data["F1Z"],
-              mode="lines",
-              line=dict(color="#3b82f6", width=1.5),
-              name="FP1 Fz",
-          ),
-          row=1,
-          col=1,
-      )
-    if "F2Z" in raw_fp2.data:
-      fig_fs.add_trace(
-          go.Scatter(
-              x=raw_fp2.time,
-              y=raw_fp2.data["F2Z"],
-              mode="lines",
-              line=dict(color="#22c55e", width=1.5),
-              name="FP2 Fz",
-          ),
-          row=2,
-          col=1,
-      )
+
+    # Use debiased signals if available; otherwise fall back to raw data
+    active_fp1_src = st.session_state.get("as3_fp1_debiased_data", raw_fp1.data)
+    active_fp2_src = st.session_state.get("as3_fp2_debiased_data", raw_fp2.data)
+
+    for ch in chosen_fp1_comps:
+        if ch in active_fp1_src:
+            fig_fs.add_trace(
+                go.Scatter(
+                    x=raw_fp1.time,
+                    y=active_fp1_src[ch],
+                    mode="lines",
+                    line=dict(color=comp_colors.get(ch, "#3b82f6"), width=1.5),
+                    name=f"FP1 {ch}",
+                ),
+                row=1,
+                col=1,
+            )
+
+    for ch in chosen_fp2_comps:
+        if ch in active_fp2_src:
+            fig_fs.add_trace(
+                go.Scatter(
+                    x=raw_fp2.time,
+                    y=active_fp2_src[ch],
+                    mode="lines",
+                    line=dict(color=comp_colors.get(ch, "#22c55e"), width=1.5),
+                    name=f"FP2 {ch}",
+                ),
+                row=2,
+                col=1,
+            )
 
     curr_win_s = float(st.session_state["as3_win_s"])
     curr_win_e = float(st.session_state["as3_win_e"])
 
     for r in [1, 2]:
-      fig_fs.add_vrect(
-          x0=curr_win_s,
-          x1=curr_win_e,
-          fillcolor="rgba(234, 179, 8, 0.25)",
-          line_width=2,
-          line_dash="dash",
-          line_color="#eab308",
-          annotation_text="Two Footstrikes Window" if r == 1 else "",
-          annotation_position="top left",
-          row=r,
-          col=1,
-      )
+        fig_fs.add_vrect(
+            x0=curr_win_s,
+            x1=curr_win_e,
+            fillcolor="rgba(234, 179, 8, 0.25)",
+            line_width=2,
+            line_dash="dash",
+            line_color="#eab308",
+            annotation_text="Two Footstrikes Window" if r == 1 else "",
+            annotation_position="top left",
+            row=r,
+            col=1,
+        )
 
     fs_curr_zoom = st.session_state["as3_fs_zoom_range"]
 
     fig_fs.update_layout(
         template="plotly_dark",
-        height=400,
+        height=420,
         dragmode="select",
         hovermode="x unified",
         margin=dict(l=20, r=20, t=35, b=20),
@@ -1656,34 +1728,33 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     # Capture Mouse Selection & Update State + Version Counter
     # -------------------------------------------------------------
     if chart_fs_event and "selection" in chart_fs_event:
-      fs_boxes = chart_fs_event["selection"].get("box", [])
-      if fs_boxes and len(fs_boxes) > 0 and "x" in fs_boxes[0]:
-        x_pts = fs_boxes[0]["x"]
-        n_s = round(float(min(x_pts)), 3)
-        n_e = round(float(max(x_pts)), 3)
+        fs_boxes = chart_fs_event["selection"].get("box", [])
+        if fs_boxes and len(fs_boxes) > 0 and "x" in fs_boxes[0]:
+            x_pts = fs_boxes[0]["x"]
+            n_s = round(float(min(x_pts)), 3)
+            n_e = round(float(max(x_pts)), 3)
 
-        if fs_tool_mode == "Zoom View":
-          if (
-              abs(n_s - fs_curr_zoom[0]) > 0.005
-              or abs(n_e - fs_curr_zoom[1]) > 0.005
-          ):
-            st.session_state["as3_fs_zoom_range"] = [n_s, n_e]
-            st.session_state["as3_fs_view_ver"] += 1
-            st.rerun()
-        else:
-          # Automatically update window bounds, zoom to selection, and increment version
-          if (
-              abs(n_s - st.session_state["as3_win_s"]) > 0.005
-              or abs(n_e - st.session_state["as3_win_e"]) > 0.005
-          ):
-            st.session_state["as3_win_s"] = n_s
-            st.session_state["as3_win_e"] = n_e
-            st.session_state["as3_fs_zoom_range"] = [
-                max(k_t_start, n_s - 0.05),
-                min(k_t_end, n_e + 0.05),
-            ]
-            st.session_state["as3_fs_view_ver"] += 1
-            st.rerun()
+            if fs_tool_mode == "Zoom View":
+                if (
+                    abs(n_s - fs_curr_zoom[0]) > 0.005
+                    or abs(n_e - fs_curr_zoom[1]) > 0.005
+                ):
+                    st.session_state["as3_fs_zoom_range"] = [n_s, n_e]
+                    st.session_state["as3_fs_view_ver"] += 1
+                    st.rerun()
+            else:
+                if (
+                    abs(n_s - st.session_state["as3_win_s"]) > 0.005
+                    or abs(n_e - st.session_state["as3_win_e"]) > 0.005
+                ):
+                    st.session_state["as3_win_s"] = n_s
+                    st.session_state["as3_win_e"] = n_e
+                    st.session_state["as3_fs_zoom_range"] = [
+                        max(k_t_start, n_s - 0.05),
+                        min(k_t_end, n_e + 0.05),
+                    ]
+                    st.session_state["as3_fs_view_ver"] += 1
+                    st.rerun()
 
     # -------------------------------------------------------------
     # Number Inputs Tied to the Current Version
@@ -1691,36 +1762,36 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     v_fs = st.session_state["as3_fs_view_ver"]
     c_fs_plat, c_fs_s, c_fs_e = st.columns([1.5, 2, 2])
     with c_fs_plat:
-      as3_plate = st.radio(
-          "Target Platform for 6-Component Plotting:",
-          ["FP1", "FP2"],
-          horizontal=True,
-          key=f"as3_fs_plate_choice_{v_fs}",
-      )
+        as3_plate = st.radio(
+            "Target Platform for 6-Component Plotting:",
+            ["FP1", "FP2"],
+            horizontal=True,
+            key=f"as3_fs_plate_choice_{v_fs}",
+        )
     with c_fs_s:
-      as3_t_start = st.number_input(
-          "Window Start (s):",
-          min_value=k_t_start,
-          max_value=k_t_end,
-          value=float(st.session_state["as3_win_s"]),
-          step=0.01,
-          format="%.3f",
-          key=f"as3_num_t_s_{v_fs}",
-      )
-      st.session_state["as3_win_s"] = as3_t_start
+        as3_t_start = st.number_input(
+            "Window Start (s):",
+            min_value=k_t_start,
+            max_value=k_t_end,
+            value=float(st.session_state["as3_win_s"]),
+            step=0.01,
+            format="%.3f",
+            key=f"as3_num_t_s_{v_fs}",
+        )
+        st.session_state["as3_win_s"] = as3_t_start
     with c_fs_e:
-      as3_t_end = st.number_input(
-          "Window End (s):",
-          min_value=k_t_start,
-          max_value=k_t_end,
-          value=float(st.session_state["as3_win_e"]),
-          step=0.01,
-          format="%.3f",
-          key=f"as3_num_t_e_{v_fs}",
-      )
-      st.session_state["as3_win_e"] = as3_t_end
+        as3_t_end = st.number_input(
+            "Window End (s):",
+            min_value=k_t_start,
+            max_value=k_t_end,
+            value=float(st.session_state["as3_win_e"]),
+            step=0.01,
+            format="%.3f",
+            key=f"as3_num_t_e_{v_fs}",
+        )
+        st.session_state["as3_win_e"] = as3_t_end
 
-    st.markdown("---")    
+    st.markdown("---")
 
 # =============================================================
     # STEP 4: APPLY FILTERING & SIGNAL CONDITIONING
