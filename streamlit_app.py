@@ -1609,12 +1609,11 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.markdown("### Step 3: Select Two Footstrikes from Full Signal")
     st.caption(
         "Click and drag horizontally across either plot to isolate two consecutive footstrikes. "
-        "The **Window Start** and **Window End** inputs and zoom view will update automatically."
+        "The graph will zoom into your selection and update the **Window Start** and **Window End** inputs below."
     )
 
     # 1. Automatic defaults detection for footstrikes if not already set
     if "as3_win_s" not in st.session_state or "as3_win_e" not in st.session_state:
-        # Search for vertical contact (> 50 N) across FP1 or FP2
         fz_data = raw_fp1.data.get("F1Z", raw_fp2.data.get("F2Z", np.array([])))
         contact_indices = np.where(np.abs(fz_data) > 50.0)[0]
         if len(contact_indices) > 0:
@@ -1631,12 +1630,12 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     v_fs = st.session_state["as3_fs_view_ver"]
 
-    # Reset Button
+    # Reset Button: Returns the view to the full recorded trial span
     col_fs_title, col_fs_rst = st.columns([4, 1])
     with col_fs_rst:
-        if st.button("Reset Full Trial View", key="as3_fs_rst_btn"):
-            st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
-            st.session_state["as3_win_e"] = round(min(k_t_end, k_t_start + 2.5), 3)
+        if st.button("Reset to Full Trial View", key="as3_fs_rst_btn"):
+            st.session_state["as3_win_s"] = round(k_t_start, 3)
+            st.session_state["as3_win_e"] = round(k_t_end, 3)
             st.session_state["as3_last_box_event"] = None
             st.session_state["as3_fs_view_ver"] += 1
             st.rerun()
@@ -1692,25 +1691,30 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         fig_fs.add_vrect(
             x0=curr_win_s,
             x1=curr_win_e,
-            fillcolor="rgba(234, 179, 8, 0.22)",
+            fillcolor="rgba(234, 179, 8, 0.18)",
             line_width=2,
             line_dash="dash",
             line_color="#eab308",
-            annotation_text="Two Footstrikes Window" if r == 1 else "",
+            annotation_text="Selected Interval" if r == 1 else "",
             annotation_position="top left",
             row=r,
             col=1,
         )
 
+    # Dynamic Zoom: Frame the display directly around the selected window (with a 5% margin)
+    span = max(0.1, curr_win_e - curr_win_s)
+    pad = span * 0.05
+    x_display_range = [max(k_t_start, curr_win_s - pad), min(k_t_end, curr_win_e + pad)]
+
     fig_fs.update_layout(
         template="plotly_dark",
         height=420,
         dragmode="select",
-        selectdirection="h",  # Horizontal box drag only
+        selectdirection="h",
         hovermode="x unified",
         margin=dict(l=20, r=20, t=35, b=20),
-        xaxis=dict(autorange=True),
-        xaxis2=dict(title="Time (s)", autorange=True),
+        xaxis=dict(range=x_display_range, autorange=False),
+        xaxis2=dict(title="Time (s)", range=x_display_range, autorange=False),
         yaxis=dict(title="Force (N)"),
         yaxis2=dict(title="Force (N)"),
         uirevision=f"fs_rev_{v_fs}",
@@ -1724,7 +1728,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         key=f"as3_fs_chart_{v_fs}",
     )
 
-    # 3. Handle Graphical Drag Selection: Update Window Start & End directly
+    # 3. Handle Graphical Drag Selection: Update Window & Zoom View
     if chart_fs_event and "selection" in chart_fs_event:
         fs_boxes = chart_fs_event["selection"].get("box", [])
         if fs_boxes and len(fs_boxes) > 0 and "x" in fs_boxes[0]:
@@ -1732,7 +1736,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             n_s = round(float(min(x_pts)), 3)
             n_e = round(float(max(x_pts)), 3)
 
-            # Prevent rerun cycles if the selection hasn't changed
+            # Prevent unnecessary reruns if within negligible selection delta
             if [n_s, n_e] != st.session_state["as3_last_box_event"]:
                 st.session_state["as3_last_box_event"] = [n_s, n_e]
                 st.session_state["as3_win_s"] = n_s
@@ -1740,12 +1744,12 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
                 st.session_state["as3_fs_view_ver"] += 1
                 st.rerun()
 
-    # 4. Inputs: Directly display and allow manual overrides of as3_win_s & as3_win_e
+    # 4. Inputs: Directly show and allow manual edits of as3_win_s & as3_win_e
     v_fs = st.session_state["as3_fs_view_ver"]
     c_fs_plat, c_fs_s, c_fs_e = st.columns([1.5, 2, 2])
     with c_fs_plat:
         as3_plate = st.radio(
-            "Target Platform for 6-Component Plotting:",
+            "Target Platform for Filtering & Kinematics:",
             ["FP1", "FP2"],
             horizontal=True,
             key=f"as3_fs_plate_choice_{v_fs}",
@@ -1760,7 +1764,10 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             format="%.3f",
             key=f"as3_num_t_s_{v_fs}",
         )
-        st.session_state["as3_win_s"] = as3_t_start
+        if as3_t_start != st.session_state["as3_win_s"]:
+            st.session_state["as3_win_s"] = as3_t_start
+            st.rerun()
+
     with c_fs_e:
         as3_t_end = st.number_input(
             "Window End (s):",
@@ -1771,7 +1778,9 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             format="%.3f",
             key=f"as3_num_t_e_{v_fs}",
         )
-        st.session_state["as3_win_e"] = as3_t_end
+        if as3_t_end != st.session_state["as3_win_e"]:
+            st.session_state["as3_win_e"] = as3_t_end
+            st.rerun()
 
     st.markdown("---")
 
