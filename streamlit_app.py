@@ -1744,43 +1744,55 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
                 st.session_state["as3_fs_view_ver"] += 1
                 st.rerun()
 
-    # 4. Inputs: Directly show and allow manual edits of as3_win_s & as3_win_e
-    v_fs = st.session_state["as3_fs_view_ver"]
-    c_fs_plat, c_fs_s, c_fs_e = st.columns([1.5, 2, 2])
-    with c_fs_plat:
-        as3_plate = st.radio(
-            "Target Platform for Filtering & Kinematics:",
-            ["FP1", "FP2"],
-            horizontal=True,
-            key=f"as3_fs_plate_choice_{v_fs}",
-        )
-    with c_fs_s:
-        as3_t_start = st.number_input(
-            "Window Start (s):",
-            min_value=k_t_start,
-            max_value=k_t_end,
-            value=float(st.session_state["as3_win_s"]),
-            step=0.01,
-            format="%.3f",
-            key=f"as3_num_t_s_{v_fs}",
-        )
-        if as3_t_start != st.session_state["as3_win_s"]:
-            st.session_state["as3_win_s"] = as3_t_start
-            st.rerun()
-
-    with c_fs_e:
-        as3_t_end = st.number_input(
-            "Window End (s):",
-            min_value=k_t_start,
-            max_value=k_t_end,
-            value=float(st.session_state["as3_win_e"]),
-            step=0.01,
-            format="%.3f",
-            key=f"as3_num_t_e_{v_fs}",
-        )
-        if as3_t_end != st.session_state["as3_win_e"]:
-            st.session_state["as3_win_e"] = as3_t_end
-            st.rerun()
+    # 4. Inputs: Clamped and guaranteed to satisfy min <= value <= max
+        v_fs = st.session_state["as3_fs_view_ver"]
+        c_fs_plat, c_fs_s, c_fs_e = st.columns([1.5, 2, 2])
+        
+        # Safe bounds ensuring min_value < max_value
+        safe_min = float(k_t_start)
+        safe_max = float(k_t_end)
+        
+        # Clamp session values safely inside [safe_min, safe_max]
+        current_s = float(st.session_state.get("as3_win_s", safe_min + 0.5))
+        current_e = float(st.session_state.get("as3_win_e", safe_min + 2.5))
+        
+        val_s = min(max(current_s, safe_min), safe_max - 0.01)
+        val_e = min(max(current_e, val_s + 0.01), safe_max)
+        
+        with c_fs_plat:
+            as3_plate = st.radio(
+                "Target Platform for Filtering & Kinematics:",
+                ["FP1", "FP2"],
+                horizontal=True,
+                key=f"as3_fs_plate_choice_{v_fs}",
+                )
+            with c_fs_s:
+                as3_t_start = st.number_input(
+                    "Window Start (s):",
+                    min_value=safe_min,
+                    max_value=safe_max,
+                    value=float(round(val_s, 3)),
+                    step=0.01,
+                    format="%.3f",
+                    key=f"as3_num_t_s_{v_fs}",
+                    )
+                if as3_t_start != st.session_state["as3_win_s"]:
+                    st.session_state["as3_win_s"] = as3_t_start
+                    st.rerun()
+                    
+                    with c_fs_e:
+                        as3_t_end = st.number_input(
+                            "Window End (s):",
+                            min_value=safe_min,
+                            max_value=safe_max,
+                            value=float(round(val_e, 3)),
+                            step=0.01,
+                            format="%.3f",
+                            key=f"as3_num_t_e_{v_fs}",
+                            )
+                        if as3_t_end != st.session_state["as3_win_e"]:
+                            st.session_state["as3_win_e"] = as3_t_end
+                            st.rerun()
 
     st.markdown("---")
 
