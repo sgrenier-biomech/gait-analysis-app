@@ -1603,44 +1603,45 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     st.markdown("---")
 
-    # =============================================================
+# =============================================================
     # STEP 3: SELECT TWO FOOTSTRIKES FROM FULL SIGNAL
     # =============================================================
     st.markdown("### Step 3: Select Two Footstrikes from Full Signal")
     st.caption(
-        "Displaying the chosen components from Steps 2a and 2b (debiased if zeroing was applied)."
-        " Use **'Zoom View'** to inspect, or **'Select Footstrikes Window'** to define the analysis window."
+        "Click and drag horizontally across either plot to isolate two consecutive footstrikes. "
+        "The **Window Start** and **Window End** inputs and zoom view will update automatically."
     )
+
+    # 1. Automatic defaults detection for footstrikes if not already set
+    if "as3_win_s" not in st.session_state or "as3_win_e" not in st.session_state:
+        # Search for vertical contact (> 50 N) across FP1 or FP2
+        fz_data = raw_fp1.data.get("F1Z", raw_fp2.data.get("F2Z", np.array([])))
+        contact_indices = np.where(np.abs(fz_data) > 50.0)[0]
+        if len(contact_indices) > 0:
+            st.session_state["as3_win_s"] = round(max(k_t_start, float(raw_fp1.time[contact_indices[0]]) - 0.2), 3)
+            st.session_state["as3_win_e"] = round(min(k_t_end, float(raw_fp1.time[contact_indices[-1]]) + 0.2), 3)
+        else:
+            st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
+            st.session_state["as3_win_e"] = round(min(k_t_end, k_t_start + 2.5), 3)
 
     if "as3_fs_view_ver" not in st.session_state:
         st.session_state["as3_fs_view_ver"] = 0
-    if "as3_fs_zoom_range" not in st.session_state:
-        st.session_state["as3_fs_zoom_range"] = [k_t_start, k_t_end]
-    if "as3_win_s" not in st.session_state:
-        st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
-    if "as3_win_e" not in st.session_state:
-        st.session_state["as3_win_e"] = round(min(k_t_end, k_t_start + 2.3), 3)
+    if "as3_last_box_event" not in st.session_state:
+        st.session_state["as3_last_box_event"] = None
 
     v_fs = st.session_state["as3_fs_view_ver"]
 
-    col_fs_ctrl, col_fs_rst = st.columns([3, 1])
-    with col_fs_ctrl:
-        fs_tool_mode = st.radio(
-            "Footstrike Selection Tool Mode:",
-            ["Zoom View", "Select Footstrikes Window"],
-            horizontal=True,
-            key=f"as3_fs_tool_mode_{v_fs}",
-        )
+    # Reset Button
+    col_fs_title, col_fs_rst = st.columns([4, 1])
     with col_fs_rst:
-        st.write("")
-        if st.button("Reset Footstrikes View", key="as3_fs_rst_btn"):
-            st.session_state["as3_fs_zoom_range"] = [k_t_start, k_t_end]
+        if st.button("Reset Full Trial View", key="as3_fs_rst_btn"):
             st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
-            st.session_state["as3_win_e"] = round(min(k_t_end, k_t_start + 2.3), 3)
+            st.session_state["as3_win_e"] = round(min(k_t_end, k_t_start + 2.5), 3)
+            st.session_state["as3_last_box_event"] = None
             st.session_state["as3_fs_view_ver"] += 1
             st.rerun()
 
-    v_fs = st.session_state["as3_fs_view_ver"]
+    # 2. Build Subplots for FP1 and FP2
     fig_fs = make_subplots(
         rows=2,
         cols=1,
@@ -1652,7 +1653,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         ),
     )
 
-    # Use debiased signals if available; otherwise fall back to raw data
     active_fp1_src = st.session_state.get("as3_fp1_debiased_data", raw_fp1.data)
     active_fp2_src = st.session_state.get("as3_fp2_debiased_data", raw_fp2.data)
 
@@ -1687,11 +1687,12 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     curr_win_s = float(st.session_state["as3_win_s"])
     curr_win_e = float(st.session_state["as3_win_e"])
 
+    # Highlight current selected footstrike window on both subplots
     for r in [1, 2]:
         fig_fs.add_vrect(
             x0=curr_win_s,
             x1=curr_win_e,
-            fillcolor="rgba(234, 179, 8, 0.25)",
+            fillcolor="rgba(234, 179, 8, 0.22)",
             line_width=2,
             line_dash="dash",
             line_color="#eab308",
@@ -1701,16 +1702,15 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             col=1,
         )
 
-    fs_curr_zoom = st.session_state["as3_fs_zoom_range"]
-
     fig_fs.update_layout(
         template="plotly_dark",
         height=420,
         dragmode="select",
+        selectdirection="h",  # Horizontal box drag only
         hovermode="x unified",
         margin=dict(l=20, r=20, t=35, b=20),
-        xaxis=dict(range=fs_curr_zoom, autorange=False),
-        xaxis2=dict(title="Time (s)", range=fs_curr_zoom, autorange=False),
+        xaxis=dict(autorange=True),
+        xaxis2=dict(title="Time (s)", autorange=True),
         yaxis=dict(title="Force (N)"),
         yaxis2=dict(title="Force (N)"),
         uirevision=f"fs_rev_{v_fs}",
@@ -1724,9 +1724,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         key=f"as3_fs_chart_{v_fs}",
     )
 
-    # -------------------------------------------------------------
-    # Capture Mouse Selection & Update State + Version Counter
-    # -------------------------------------------------------------
+    # 3. Handle Graphical Drag Selection: Update Window Start & End directly
     if chart_fs_event and "selection" in chart_fs_event:
         fs_boxes = chart_fs_event["selection"].get("box", [])
         if fs_boxes and len(fs_boxes) > 0 and "x" in fs_boxes[0]:
@@ -1734,31 +1732,15 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             n_s = round(float(min(x_pts)), 3)
             n_e = round(float(max(x_pts)), 3)
 
-            if fs_tool_mode == "Zoom View":
-                if (
-                    abs(n_s - fs_curr_zoom[0]) > 0.005
-                    or abs(n_e - fs_curr_zoom[1]) > 0.005
-                ):
-                    st.session_state["as3_fs_zoom_range"] = [n_s, n_e]
-                    st.session_state["as3_fs_view_ver"] += 1
-                    st.rerun()
-            else:
-                if (
-                    abs(n_s - st.session_state["as3_win_s"]) > 0.005
-                    or abs(n_e - st.session_state["as3_win_e"]) > 0.005
-                ):
-                    st.session_state["as3_win_s"] = n_s
-                    st.session_state["as3_win_e"] = n_e
-                    st.session_state["as3_fs_zoom_range"] = [
-                        max(k_t_start, n_s - 0.05),
-                        min(k_t_end, n_e + 0.05),
-                    ]
-                    st.session_state["as3_fs_view_ver"] += 1
-                    st.rerun()
+            # Prevent rerun cycles if the selection hasn't changed
+            if [n_s, n_e] != st.session_state["as3_last_box_event"]:
+                st.session_state["as3_last_box_event"] = [n_s, n_e]
+                st.session_state["as3_win_s"] = n_s
+                st.session_state["as3_win_e"] = n_e
+                st.session_state["as3_fs_view_ver"] += 1
+                st.rerun()
 
-    # -------------------------------------------------------------
-    # Number Inputs Tied to the Current Version
-    # -------------------------------------------------------------
+    # 4. Inputs: Directly display and allow manual overrides of as3_win_s & as3_win_e
     v_fs = st.session_state["as3_fs_view_ver"]
     c_fs_plat, c_fs_s, c_fs_e = st.columns([1.5, 2, 2])
     with c_fs_plat:
