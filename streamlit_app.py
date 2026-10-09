@@ -1612,16 +1612,19 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         "The graph will zoom into your selection and update the **Window Start** and **Window End** inputs below."
     )
 
+    safe_min = float(k_t_start)
+    safe_max = float(k_t_end)
+
     # 1. Automatic defaults detection for footstrikes if not already set
     if "as3_win_s" not in st.session_state or "as3_win_e" not in st.session_state:
         fz_data = raw_fp1.data.get("F1Z", raw_fp2.data.get("F2Z", np.array([])))
         contact_indices = np.where(np.abs(fz_data) > 50.0)[0]
         if len(contact_indices) > 0:
-            st.session_state["as3_win_s"] = round(max(k_t_start, float(raw_fp1.time[contact_indices[0]]) - 0.2), 3)
-            st.session_state["as3_win_e"] = round(min(k_t_end, float(raw_fp1.time[contact_indices[-1]]) + 0.2), 3)
+            st.session_state["as3_win_s"] = round(max(safe_min, float(raw_fp1.time[contact_indices[0]]) - 0.2), 3)
+            st.session_state["as3_win_e"] = round(min(safe_max, float(raw_fp1.time[contact_indices[-1]]) + 0.2), 3)
         else:
-            st.session_state["as3_win_s"] = round(k_t_start + 0.5, 3)
-            st.session_state["as3_win_e"] = round(min(k_t_end, k_t_start + 2.5), 3)
+            st.session_state["as3_win_s"] = round(safe_min + 0.5, 3)
+            st.session_state["as3_win_e"] = round(min(safe_max, safe_min + 2.5), 3)
 
     if "as3_fs_view_ver" not in st.session_state:
         st.session_state["as3_fs_view_ver"] = 0
@@ -1634,8 +1637,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     col_fs_title, col_fs_rst = st.columns([4, 1])
     with col_fs_rst:
         if st.button("Reset to Full Trial View", key="as3_fs_rst_btn"):
-            st.session_state["as3_win_s"] = round(k_t_start, 3)
-            st.session_state["as3_win_e"] = round(k_t_end, 3)
+            st.session_state["as3_win_s"] = round(safe_min, 3)
+            st.session_state["as3_win_e"] = round(safe_max, 3)
             st.session_state["as3_last_box_event"] = None
             st.session_state["as3_fs_view_ver"] += 1
             st.rerun()
@@ -1686,7 +1689,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     curr_win_s = float(st.session_state["as3_win_s"])
     curr_win_e = float(st.session_state["as3_win_e"])
 
-    # Highlight current selected footstrike window on both subplots
     for r in [1, 2]:
         fig_fs.add_vrect(
             x0=curr_win_s,
@@ -1701,10 +1703,10 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             col=1,
         )
 
-    # Dynamic Zoom: Frame the display directly around the selected window (with a 5% margin)
+    # Frame viewport around selection with a 5% margin
     span = max(0.1, curr_win_e - curr_win_s)
     pad = span * 0.05
-    x_display_range = [max(k_t_start, curr_win_s - pad), min(k_t_end, curr_win_e + pad)]
+    x_display_range = [max(safe_min, curr_win_s - pad), min(safe_max, curr_win_e + pad)]
 
     fig_fs.update_layout(
         template="plotly_dark",
@@ -1728,7 +1730,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         key=f"as3_fs_chart_{v_fs}",
     )
 
-    # 3. Handle Graphical Drag Selection: Update Window & Zoom View
+    # 3. Handle Graphical Drag Selection
     if chart_fs_event and "selection" in chart_fs_event:
         fs_boxes = chart_fs_event["selection"].get("box", [])
         if fs_boxes and len(fs_boxes) > 0 and "x" in fs_boxes[0]:
@@ -1736,7 +1738,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             n_s = round(float(min(x_pts)), 3)
             n_e = round(float(max(x_pts)), 3)
 
-            # Prevent unnecessary reruns if within negligible selection delta
             if [n_s, n_e] != st.session_state["as3_last_box_event"]:
                 st.session_state["as3_last_box_event"] = [n_s, n_e]
                 st.session_state["as3_win_s"] = n_s
@@ -1744,59 +1745,54 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
                 st.session_state["as3_fs_view_ver"] += 1
                 st.rerun()
 
-    # 4. Inputs: Clamped and guaranteed to satisfy min <= value <= max
-        v_fs = st.session_state["as3_fs_view_ver"]
-        c_fs_plat, c_fs_s, c_fs_e = st.columns([1.5, 2, 2])
-        
-        # Safe bounds ensuring min_value < max_value
-        safe_min = float(k_t_start)
-        safe_max = float(k_t_end)
-        
-        # Clamp session values safely inside [safe_min, safe_max]
-        current_s = float(st.session_state.get("as3_win_s", safe_min + 0.5))
-        current_e = float(st.session_state.get("as3_win_e", safe_min + 2.5))
-        
-        val_s = min(max(current_s, safe_min), safe_max - 0.01)
-        val_e = min(max(current_e, val_s + 0.01), safe_max)
-        
-        with c_fs_plat:
-            as3_plate = st.radio(
-                "Target Platform for Filtering & Kinematics:",
-                ["FP1", "FP2"],
-                horizontal=True,
-                key=f"as3_fs_plate_choice_{v_fs}",
-                )
-            with c_fs_s:
-                as3_t_start = st.number_input(
-                    "Window Start (s):",
-                    min_value=safe_min,
-                    max_value=safe_max,
-                    value=float(round(val_s, 3)),
-                    step=0.01,
-                    format="%.3f",
-                    key=f"as3_num_t_s_{v_fs}",
-                    )
-                if as3_t_start != st.session_state["as3_win_s"]:
-                    st.session_state["as3_win_s"] = as3_t_start
-                    st.rerun()
-                    
-                    with c_fs_e:
-                        as3_t_end = st.number_input(
-                            "Window End (s):",
-                            min_value=safe_min,
-                            max_value=safe_max,
-                            value=float(round(val_e, 3)),
-                            step=0.01,
-                            format="%.3f",
-                            key=f"as3_num_t_e_{v_fs}",
-                            )
-                        if as3_t_end != st.session_state["as3_win_e"]:
-                            st.session_state["as3_win_e"] = as3_t_end
-                            st.rerun()
+    # 4. Inputs: Safely clamped to prevent Streamlit widget boundary errors
+    v_fs = st.session_state["as3_fs_view_ver"]
+    c_fs_plat, c_fs_s, c_fs_e = st.columns([1.5, 2, 2])
+
+    current_s = float(st.session_state.get("as3_win_s", safe_min + 0.5))
+    current_e = float(st.session_state.get("as3_win_e", safe_min + 2.5))
+
+    val_s = min(max(current_s, safe_min), safe_max - 0.01)
+    val_e = min(max(current_e, val_s + 0.01), safe_max)
+
+    with c_fs_plat:
+        as3_plate = st.radio(
+            "Target Platform for Filtering & Kinematics:",
+            ["FP1", "FP2"],
+            horizontal=True,
+            key=f"as3_fs_plate_choice_{v_fs}",
+        )
+    with c_fs_s:
+        as3_t_start = st.number_input(
+            "Window Start (s):",
+            min_value=safe_min,
+            max_value=safe_max,
+            value=float(round(val_s, 3)),
+            step=0.01,
+            format="%.3f",
+            key=f"as3_num_t_s_{v_fs}",
+        )
+        if as3_t_start != st.session_state["as3_win_s"]:
+            st.session_state["as3_win_s"] = as3_t_start
+            st.rerun()
+
+    with c_fs_e:
+        as3_t_end = st.number_input(
+            "Window End (s):",
+            min_value=safe_min,
+            max_value=safe_max,
+            value=float(round(val_e, 3)),
+            step=0.01,
+            format="%.3f",
+            key=f"as3_num_t_e_{v_fs}",
+        )
+        if as3_t_end != st.session_state["as3_win_e"]:
+            st.session_state["as3_win_e"] = as3_t_end
+            st.rerun()
 
     st.markdown("---")
 
-# =============================================================
+    # =============================================================
     # STEP 4: APPLY FILTERING & SIGNAL CONDITIONING
     # =============================================================
     st.markdown("### Step 4: Apply Filtering Algorithm & Parameters")
@@ -1861,14 +1857,12 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     raw_base_ts = raw_fp1 if as3_plate == "FP1" else raw_fp2
     p_num = "1" if as3_plate == "FP1" else "2"
 
-    # Identify user-selected components from Step 2a/2b
     active_selected_comps = (
         st.session_state.get("as3_fp1_components", [f"F1X", f"F1Y", f"F1Z"])
         if as3_plate == "FP1"
         else st.session_state.get("as3_fp2_components", [f"F2X", f"F2Y", f"F2Z"])
     )
 
-    # 1. Retrieve Debiased Source (from Step 2) or Raw Baseline
     debiased_store_key = f"as3_fp{p_num}_debiased_data"
     debiased_dict = st.session_state.get(debiased_store_key, None)
 
@@ -1878,9 +1872,15 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             if k in fp_work.data:
                 fp_work.data[k] = np.copy(v)
 
-    # 2. Slice strictly across the isolated Step 3 window
-    win_s = float(st.session_state.get("as3_win_s", as3_t_start))
-    win_e = float(st.session_state.get("as3_win_e", as3_t_end))
+    # Clean slice time extraction without referencing transient widget keys
+    t_arr = raw_base_ts.time
+    t_min = float(t_arr[0])
+    t_max = float(t_arr[-1])
+
+    win_s = float(st.session_state.get("as3_win_s", t_min + 0.5))
+    win_e = float(st.session_state.get("as3_win_e", t_min + 2.5))
+    win_s = max(t_min, min(win_s, t_max - 0.05))
+    win_e = min(t_max, max(win_e, win_s + 0.05))
 
     mask_window = (raw_base_ts.time >= win_s) & (raw_base_ts.time <= win_e)
     if not np.any(mask_window):
@@ -1888,7 +1888,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     time_window = raw_base_ts.time[mask_window]
 
-    # Create windowed TimeSeries objects for raw and debiased signals
     window_raw_ts = ktk.TimeSeries(time=time_window)
     window_processed_ts = ktk.TimeSeries(time=time_window)
 
@@ -1896,7 +1895,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         window_raw_ts.data[k] = np.copy(raw_base_ts.data[k][mask_window])
         window_processed_ts.data[k] = np.copy(fp_work.data[k][mask_window])
 
-    # 3. Filtering / Smoothing Application
     filter_legend_label = "Processed"
     window_filtered_ts = copy.deepcopy(window_processed_ts)
 
@@ -1979,7 +1977,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         ),
     ]
 
-    # Filter to only show components that were selected in Step 2 (plus any available moments)
     display_specs = [
         spec for spec in all_specs 
         if spec[0] in active_selected_comps or (spec[0].startswith("M") and spec[0] in raw_base_ts.data)
@@ -1992,7 +1989,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         with target_col:
             fig_comp = go.Figure()
 
-            # Pre-filtered/Debiased baseline trace
             if ch_key in window_processed_ts.data:
                 y_proc = np.asarray(window_processed_ts.data[ch_key]).squeeze()
                 fig_comp.add_trace(
@@ -2006,7 +2002,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
                     )
                 )
 
-            # Filtered trace
             if ch_key in window_filtered_ts.data:
                 y_filt = np.asarray(window_filtered_ts.data[ch_key]).squeeze()
                 fig_comp.add_trace(
