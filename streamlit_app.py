@@ -641,7 +641,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
 # Define dynamic tabs that unlock sequentially
   tab_labels = [
-      "3D animation"
+      "3D animation",
       "Assignment 1: Raw Signals",
       "Assignment 2: CoM & GRF",
       "Assignment 3: 6-DOF GRF Analysis",
