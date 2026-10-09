@@ -802,29 +802,49 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
                 xaxis=dict(range=[x_min, x_max], title="X (Mediolateral)"),
                 yaxis=dict(range=[y_min, y_max], title="Y (Anteroposterior)"),
                 zaxis=dict(range=[z_min, z_max], title="Z (Vertical)"),
-                aspectmode="data"
+                aspectmode="data",
             ),
-            updatemenus=[{
-                "type": "buttons",
-                "showactive": False,
-                "x": 0.05,
-                "y": 1.15,
-                "buttons": [
-                    {
-                        "label": "▶ Play",
-                        "method": "animate",
-                        "args": [None, {"frame": {"duration": 30, "redraw": True}, "fromcurrent": True, "transition": {"duration": 0}}]
-                    },
-                    {
-                        "label": "⏸ Pause",
-                        "method": "animate",
-                        "args": [[None], {"mode": "immediate", "frame": {"duration": 0, "redraw": False}, "transition": {"duration": 0}}]
-                    }
-                ]
-            }],
+            updatemenus=[
+                {
+                    "type": "buttons",
+                    "showactive": False,
+                    "x": 0.05,
+                    "y": 1.15,
+                    "buttons": [
+                        {
+                            "label": "▶ Play",
+                            "method": "animate",
+                            "args": [
+                                None,
+                                {
+                                    # Increased from 30ms to 80ms per frame to slow playback down
+                                    "frame": {"duration": 80, "redraw": True},
+                                    "fromcurrent": True,
+                                    "transition": {"duration": 40},
+                                },
+                            ],
+                        },
+                        {
+                            "label": "⏸ Pause",
+                            "method": "animate",
+                            "args": [
+                                [None],
+                                {
+                                    "mode": "immediate",
+                                    "frame": {
+                                        "duration": 0,
+                                        "redraw": False,
+                                    },
+                                    "transition": {"duration": 0},
+                                },
+                            ],
+                        },
+                    ],
+                }
+            ],
             sliders=sliders,
             height=620,
-            margin=dict(l=0, r=0, t=30, b=0)
+            margin=dict(l=0, r=0, t=30, b=0),
         )
 
         st.plotly_chart(fig_stick, use_container_width=True)
