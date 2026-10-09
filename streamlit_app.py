@@ -818,7 +818,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
                                 None,
                                 {
                                     # Increased from 30ms to 80ms per frame to slow playback down
-                                    "frame": {"duration": 240, "redraw": True},
+                                    "frame": {"duration": 480, "redraw": True},
                                     "fromcurrent": True,
                                     "transition": {"duration": 40},
                                 },
