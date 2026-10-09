@@ -649,145 +649,170 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # ASSIGNMENT 1: RAW SIGNALS (POINTS & ANALOGS)
   # =========================================================================
   with active_tabs[0]:
-# --- Assignment 1: Raw Signals ---
-    st.subheader("Assignment 1: Raw Signals")
+        # --- Assignment 1: Raw Signals ---
+        st.subheader("Assignment 1: Raw Signals")
 
-# Retrieve available marker names from the loaded data
-    markers_dict = st.session_state.get("markers")
-
-if markers_dict is not None:
-    # 1. Use None as the default selection so the plot stays blank initially
-    marker_names = list(markers_dict.data.keys())
-    
-    selected_marker = st.selectbox(
-        "Select a Marker to Inspect:",
-        options=marker_names,
-        index=None,
-        placeholder="Choose a marker...",
-        key="asgt1_marker_select"
-    )
-
-    # 2. Stay blank until the user explicitly selects a marker
-    if selected_marker is None:
-        st.info("Please select a marker above to inspect raw marker trajectories.")
-    else:
-        # 3. Extract marker trajectory data (X, Y, Z coordinates)
-        marker_data = markers_dict.data[selected_marker]  # Shape: (N, 4) or (N, 3)
-        time_series = markers_dict.time
-
-        # Build raw trajectory plot (X, Y, Z marker coordinates)
-        import plotly.graph_objects as go
-
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=time_series, y=marker_data[:, 0], mode="lines", name=f"{selected_marker} X"))
-        fig.add_trace(go.Scatter(x=time_series, y=marker_data[:, 1], mode="lines", name=f"{selected_marker} Y"))
-        fig.add_trace(go.Scatter(x=time_series, y=marker_data[:, 2], mode="lines", name=f"{selected_marker} Z"))
-
-        fig.update_layout(
-            title=f"Raw 3D Trajectory: {selected_marker}",
-            xaxis_title="Time (s)",
-            yaxis_title="Position (m or mm)",
-            legend_title="Coordinate",
-            hovermode="x unified",
-            height=450
+        # 1. Retrieve data structures from session_state
+        markers_dict = st.session_state.get("markers")
+        analogs_ts = st.session_state.get("raw_analogs")
+        available_analogs = (
+            list(analogs_ts.data.keys())
+            if (analogs_ts is not None and hasattr(analogs_ts, "data"))
+            else []
         )
 
-        st.plotly_chart(fig, use_container_width=True)
-else:
-    st.warning("No marker data available. Please process a .c3d file first.")
+        import plotly.graph_objects as go
 
-    with st.expander("💡 Assignment Helper: Part A Questions"):
-      st.markdown(
-          f"""
-            * **What points do you believe `{marker1}` and `{marker2}` are?** 
-              Identify the anatomical landmarks corresponding to these acronyms based on the paper's description.
-            * **What does each line represent?** 
-              * **X (Red):** Medio-lateral displacement.
-              * **Y (Green):** Antero-posterior displacement.
-              * **Z (Blue):** Vertical displacement.
-            """
-      )
+        # --- Part A: Raw Markers ---
+        if markers_dict is not None and hasattr(markers_dict, "data"):
+            marker_names = list(markers_dict.data.keys())
 
-    st.markdown("---")
+            selected_marker = st.selectbox(
+                "Select a Marker to Inspect:",
+                options=marker_names,
+                index=None,
+                placeholder="Choose a marker...",
+                key="asgt1_marker_select",
+            )
 
-    # --- Part B: Analogs ---
-    st.markdown(
-        "#### Part B: Raw Vertical Force Component from `Analogs` (Not Points)"
-    )
-    st.caption(
-        "Zoom in so that only a single foot strike is displayed. Select the raw"
-        " vertical analog channel to inspect before calibration or zeroing."
-    )
+            if selected_marker is None:
+                st.info("Please select a marker above to inspect raw marker trajectories.")
+            else:
+                marker_data = markers_dict.data[selected_marker]
+                time_series = markers_dict.time
 
- # Detect sine wave channel first; fall back to vertical force or first channel
-    sine_candidates = [k for k in available_analogs if "sin" in k.lower()]
-    vertical_candidates = [
-        k
-        for k in available_analogs
-        if "fz" in k.lower() or "f1z" in k.lower() or "force" in k.lower()
-    ]
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=time_series,
+                        y=marker_data[:, 0],
+                        mode="lines",
+                        name=f"{selected_marker} X",
+                        line=dict(color="#ef4444", width=1.5),
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=time_series,
+                        y=marker_data[:, 1],
+                        mode="lines",
+                        name=f"{selected_marker} Y",
+                        line=dict(color="#10b981", width=1.5),
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=time_series,
+                        y=marker_data[:, 2],
+                        mode="lines",
+                        name=f"{selected_marker} Z",
+                        line=dict(color="#3b82f6", width=1.5),
+                    )
+                )
 
-    if sine_candidates:
-      default_channel = sine_candidates[0]
-    elif vertical_candidates:
-      default_channel = vertical_candidates[0]
-    else:
-      default_channel = available_analogs[0] if available_analogs else None
+                fig.update_layout(
+                    title=f"Raw 3D Trajectory: {selected_marker}",
+                    xaxis_title="Time (s)",
+                    yaxis_title="Position (m or mm)",
+                    legend_title="Coordinate",
+                    hovermode="x unified",
+                    height=450,
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No marker data available. Please process a .c3d file first.")
 
-    def_analog_idx = (
-        available_analogs.index(default_channel)
-        if default_channel in available_analogs
-        else 0
-    )
-    c_a1, c_a2 = st.columns([2, 1])
-    with c_a1:
-      chosen_analog = st.selectbox(
-          "Select Raw Analog Channel:",
-          available_analogs,
-          index=def_analog_idx,
-          key="as1_analog_ch",
-      )
-    with c_a2:
-      st.caption(
-          f"Analog channels recorded: {len(available_analogs)} total channels."
-      )
-      
-    fig_as1_analog = go.Figure()
-    if chosen_analog in analogs_ts.data:
-      fig_as1_analog.add_trace(
-          go.Scatter(
-              x=analogs_ts.time,
-              y=analogs_ts.data[chosen_analog],
-              mode="lines",
-              line=dict(color="#f59e0b", width=1.5),
-              name=chosen_analog,
-          )
-      )
+        with st.expander("💡 Assignment Helper: Part A Questions"):
+            st.markdown(
+                """
+                * **What points have you graphed?** 
+                  Identify the anatomical landmarks corresponding to these acronyms based on the paper's description.
+                * **What does each line represent?** 
+                  * **X (Red):** M-L (Mediolateral)
+                  * **Y (Green):** A-P (Anteroposterior)
+                  * **Z (Blue):** Vertical
+                """
+            )
 
-    fig_as1_analog.update_layout(
-        title=f"Raw Analog Signal: {chosen_analog}",
-        xaxis_title="Time (s)",
-        yaxis_title="Raw ADC Voltage / Bits (Uncalibrated)",
-        template="plotly_dark",
-        hovermode="x unified",
-        margin=dict(l=20, r=20, t=40, b=20),
-    )
-    st.plotly_chart(fig_as1_analog, use_container_width=True)
+        st.markdown("---")
 
-    with st.expander("💡 Assignment Helper: Part B Questions"):
-      st.markdown(
-          f"""
-            * **Explain what you have plotted:** 
-              You plotted `{chosen_analog}` directly from `c3d["Analogs"]`. This is the raw transducer electrical signal (voltage or digital counts) recorded directly from the force plate amplifier before calibration matrices, scale factors, or baseline offsets are applied.
-            * **Does it make sense?**
-              * Is there a steady non-zero baseline during unloaded intervals?
-              * Are there noticeable deflection spikes during foot strikes?
-              * Is high-frequency electrical noise visible along the baseline?
-            """
-      )
+        # --- Part B: Analogs ---
+        st.markdown("#### Part B: Raw Vertical Force Component from `Analogs` (Not Points)")
+        st.caption(
+            "Zoom in so that only a single foot strike is displayed. Select the raw"
+            " vertical analog channel to inspect before calibration or zeroing."
+        )
 
-    st.markdown("---")
+        if available_analogs:
+            sine_candidates = [k for k in available_analogs if "sin" in k.lower()]
+            vertical_candidates = [
+                k
+                for k in available_analogs
+                if "fz" in k.lower() or "f1z" in k.lower() or "force" in k.lower()
+            ]
 
+            if sine_candidates:
+                default_channel = sine_candidates[0]
+            elif vertical_candidates:
+                default_channel = vertical_candidates[0]
+            else:
+                default_channel = available_analogs[0]
+
+            def_analog_idx = (
+                available_analogs.index(default_channel)
+                if default_channel in available_analogs
+                else 0
+            )
+
+            c_a1, c_a2 = st.columns([2, 1])
+            with c_a1:
+                chosen_analog = st.selectbox(
+                    "Select Raw Analog Channel:",
+                    available_analogs,
+                    index=def_analog_idx,
+                    key="as1_analog_ch",
+                )
+            with c_a2:
+                st.caption(f"Analog channels recorded: {len(available_analogs)} total channels.")
+
+            fig_as1_analog = go.Figure()
+            if chosen_analog in analogs_ts.data:
+                fig_as1_analog.add_trace(
+                    go.Scatter(
+                        x=analogs_ts.time,
+                        y=analogs_ts.data[chosen_analog],
+                        mode="lines",
+                        line=dict(color="#f59e0b", width=1.5),
+                        name=chosen_analog,
+                    )
+                )
+
+            fig_as1_analog.update_layout(
+                title=f"Raw Analog Signal: {chosen_analog}",
+                xaxis_title="Time (s)",
+                yaxis_title="Raw ADC Voltage / Bits (Uncalibrated)",
+                template="plotly_dark",
+                hovermode="x unified",
+                margin=dict(l=20, r=20, t=40, b=20),
+            )
+            st.plotly_chart(fig_as1_analog, use_container_width=True)
+
+            with st.expander("💡 Assignment Helper: Part B Questions"):
+                st.markdown(
+                    f"""
+                    * **Explain what you have plotted:** 
+                      You plotted `{chosen_analog}` directly from `c3d["Analogs"]`. This is the raw transducer electrical signal (voltage or digital counts) recorded directly from the force plate amplifier before calibration matrices, scale factors, or baseline offsets are applied.
+                    * **Does it make sense?**
+                      * Is there a steady non-zero baseline during unloaded intervals?
+                      * Are there noticeable deflection spikes during foot strikes?
+                      * Is high-frequency electrical noise visible along the baseline?
+                    """
+                )
+        else:
+            st.info("No raw analog channels found in the loaded trial.")
+
+        st.markdown("---")
+        
   # =========================================================================
   # ASSIGNMENT 2: CENTRE OF MASS & GROUND REACTION FORCES
   # =========================================================================
