@@ -649,89 +649,52 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # ASSIGNMENT 1: RAW SIGNALS (POINTS & ANALOGS)
   # =========================================================================
   with active_tabs[0]:
-    st.subheader("Assignment 1: Inspecting Raw Marker & Analog Data")
-    st.markdown(
-        """
-        Complete the tasks below with explanations for your choices.
-        """
+# --- Assignment 1: Raw Signals ---
+    st.subheader("Assignment 1: Raw Signals")
+
+# Retrieve available marker names from the loaded data
+    markers_dict = st.session_state.get("markers")
+
+if markers_dict is not None:
+    # 1. Use None as the default selection so the plot stays blank initially
+    marker_names = list(markers_dict.data.keys())
+    
+    selected_marker = st.selectbox(
+        "Select a Marker to Inspect:",
+        options=marker_names,
+        index=None,
+        placeholder="Choose a marker...",
+        key="asgt1_marker_select"
     )
 
-    markers_ts = st.session_state["markers"]
-    analogs_ts = st.session_state["raw_analogs"]
-    available_markers = list(markers_ts.data.keys())
-    available_analogs = list(analogs_ts.data.keys())
+    # 2. Stay blank until the user explicitly selects a marker
+    if selected_marker is None:
+        st.info("Please select a marker above to inspect raw marker trajectories.")
+    else:
+        # 3. Extract marker trajectory data (X, Y, Z coordinates)
+        marker_data = markers_dict.data[selected_marker]  # Shape: (N, 4) or (N, 3)
+        time_series = markers_dict.time
 
-    # --- Part A: Points ---
-    st.markdown("#### Part A: Full-Trial Trajectories of Two Points (`Points`)")
-    st.caption("Select two markers of your choice to inspect.")
+        # Build raw trajectory plot (X, Y, Z marker coordinates)
+        import plotly.graph_objects as go
 
-    col_m1, col_m2 = st.columns(2)
-    with col_m1:
-      def_idx1 = (
-          available_markers.index("RHEE")
-          if "RHEE" in available_markers
-          else 0
-          if available_markers
-          else 0
-      )
-      marker1 = st.selectbox(
-          "Select First Point:",
-          available_markers,
-          index=def_idx1,
-          key="as1_p1",
-      )
-    with col_m2:
-      def_idx2 = (
-          available_markers.index("LHEE")
-          if "LHEE" in available_markers
-          else 1
-          if len(available_markers) > 1
-          else 0
-      )
-      marker2 = st.selectbox(
-          "Select Second Point:",
-          available_markers,
-          index=def_idx2,
-          key="as1_p2",
-      )
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=time_series, y=marker_data[:, 0], mode="lines", name=f"{selected_marker} X"))
+        fig.add_trace(go.Scatter(x=time_series, y=marker_data[:, 1], mode="lines", name=f"{selected_marker} Y"))
+        fig.add_trace(go.Scatter(x=time_series, y=marker_data[:, 2], mode="lines", name=f"{selected_marker} Z"))
 
-    fig_as1_pts = go.Figure()
-    colors = ["#ef4444", "#22c55e", "#3b82f6"]  # X, Y, Z
-    axis_names = ["X (Medio-Lateral)", "Y (Antero-Posterior)", "Z (Vertical)"]
-
-    if marker1 in markers_ts.data:
-      for i in range(3):
-        fig_as1_pts.add_trace(
-            go.Scatter(
-                x=markers_ts.time,
-                y=markers_ts.data[marker1][:, i],
-                mode="lines",
-                name=f"{marker1} - {axis_names[i]}",
-                line=dict(color=colors[i], width=2),
-            )
+        fig.update_layout(
+            title=f"Raw 3D Trajectory: {selected_marker}",
+            xaxis_title="Time (s)",
+            yaxis_title="Position (m or mm)",
+            legend_title="Coordinate",
+            hovermode="x unified",
+            height=450
         )
 
-    if marker2 in markers_ts.data:
-      for i in range(3):
-        fig_as1_pts.add_trace(
-            go.Scatter(
-                x=markers_ts.time,
-                y=markers_ts.data[marker2][:, i],
-                mode="lines",
-                name=f"{marker2} - {axis_names[i]}",
-                line=dict(color=colors[i], width=2, dash="dash"),
-            )
-        )
-
-    fig_as1_pts.update_layout(
-        title=f"3D Trajectories: {marker1} (Solid) vs. {marker2} (Dashed)",
-        xaxis_title="Time (s)",
-        yaxis_title="Position (m)",
-        template="plotly_dark",
-        hovermode="x unified",
-        margin=dict(l=20, r=20, t=40, b=20),
-    )
-    st.plotly_chart(fig_as1_pts, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
+else:
+    st.warning("No marker data available. Please process a .c3d file first.")
 
     with st.expander("💡 Assignment Helper: Part A Questions"):
       st.markdown(
