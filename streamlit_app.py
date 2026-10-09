@@ -1037,14 +1037,14 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     st.markdown("---")
 
-    # --- Part 3: Zoomed-In Single Foot Strike ---
+# --- Part 3: Zoomed-In Single Foot Strike ---
     st.markdown("#### Part 3: Zoomed-In Single Foot Strike")
-    st.caption("Adjust the window below to isolate a single stance phase.")
+    st.caption("Adjust the inputs or click-and-drag directly on the plot to isolate a single stance phase.")
 
     t_fp_start = float(raw_fp_ts.time[0])
     t_fp_end = float(raw_fp_ts.time[-1])
 
-    # Automatically identify stance bounds where |Fz| > 50 N
+    # 1. Automatically identify stance bounds where |Fz| > 50 N (fallback baseline)
     fz_trace = (
         raw_fp_ts.data[f"F{p_num}Z"]
         if f"F{p_num}Z" in raw_fp_ts.data
@@ -1052,46 +1052,56 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
     contact_pts = np.where(np.abs(fz_trace) > 50.0)[0]
     if len(contact_pts) > 0:
-      auto_start = float(raw_fp_ts.time[contact_pts[0]]) - 0.1
-      auto_end = float(raw_fp_ts.time[contact_pts[-1]]) + 0.1
+        auto_start = float(raw_fp_ts.time[contact_pts[0]]) - 0.1
+        auto_end = float(raw_fp_ts.time[contact_pts[-1]]) + 0.1
     else:
-      auto_start = t_fp_start + 0.5
-      auto_end = auto_start + 0.8
+        auto_start = t_fp_start + 0.5
+        auto_end = auto_start + 0.8
 
+    # 2. Seed session state once if not already present
+    if "as2_zoom_start" not in st.session_state:
+        st.session_state["as2_zoom_start"] = round(max(t_fp_start, auto_start), 3)
+    if "as2_zoom_end" not in st.session_state:
+        st.session_state["as2_zoom_end"] = round(min(t_fp_end, auto_end), 3)
+
+    # 3. Time window input widgets
     col_z1, col_z2 = st.columns(2)
     with col_z1:
-      strike_zoom_s = st.number_input(
-          "Foot Strike Window Start (s):",
-          min_value=t_fp_start,
-          max_value=t_fp_end,
-          value=round(max(t_fp_start, auto_start), 3),
-          step=0.01,
-          format="%.3f",
-          key="as2_zoom_start",
-      )
+        strike_zoom_s = st.number_input(
+            "Foot Strike Window Start (s):",
+            min_value=t_fp_start,
+            max_value=t_fp_end,
+            value=st.session_state["as2_zoom_start"],
+            step=0.01,
+            format="%.3f",
+            key="input_as2_start",
+        )
+        st.session_state["as2_zoom_start"] = strike_zoom_s
     with col_z2:
-      strike_zoom_e = st.number_input(
-          "Foot Strike Window End (s):",
-          min_value=t_fp_start,
-          max_value=t_fp_end,
-          value=round(min(t_fp_end, auto_end), 3),
-          step=0.01,
-          format="%.3f",
-          key="as2_zoom_end",
-      )
+        strike_zoom_e = st.number_input(
+            "Foot Strike Window End (s):",
+            min_value=t_fp_start,
+            max_value=t_fp_end,
+            value=st.session_state["as2_zoom_end"],
+            step=0.01,
+            format="%.3f",
+            key="input_as2_end",
+        )
+        st.session_state["as2_zoom_end"] = strike_zoom_e
 
+    # 4. Construct Plotly trace data
     fig_zoom_grf = go.Figure()
     for label, key, color in grf_channel_meta:
-      if key in raw_fp_ts.data:
-        fig_zoom_grf.add_trace(
-            go.Scatter(
-                x=raw_fp_ts.time,
-                y=raw_fp_ts.data[key],
-                mode="lines",
-                name=label,
-                line=dict(color=color, width=2.5),
+        if key in raw_fp_ts.data:
+            fig_zoom_grf.add_trace(
+                go.Scatter(
+                    x=raw_fp_ts.time,
+                    y=raw_fp_ts.data[key],
+                    mode="lines",
+                    name=label,
+                    line=dict(color=color, width=2.5),
+                )
             )
-        )
 
     fig_zoom_grf.update_layout(
         title=(
@@ -1102,14 +1112,37 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         yaxis_title="Force (N)",
         template="plotly_dark",
         hovermode="x unified",
+        dragmode="select",        # Enables box selection
+        selectdirection="h",      # Restricts drag selection horizontally to the time axis
         xaxis=dict(range=[strike_zoom_s, strike_zoom_e], autorange=False),
         margin=dict(l=20, r=20, t=40, b=20),
     )
-    st.plotly_chart(fig_zoom_grf, use_container_width=True)
+
+    # 5. Render with bidirectional selection event handling
+    event_data = st.plotly_chart(
+        fig_zoom_grf,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode=["box"],
+        key="as2_grf_zoom_plot",
+    )
+
+    # 6. If user clicked and dragged a box on the plot, update session_state and rerun
+    if event_data and "selection" in event_data:
+        box_coords = event_data["selection"].get("box", [])
+        if box_coords:
+            x_selected = box_coords[0].get("x", [])
+            if len(x_selected) == 2:
+                sel_start = round(max(t_fp_start, float(x_selected[0])), 3)
+                sel_end = round(min(t_fp_end, float(x_selected[1])), 3)
+                if sel_start != st.session_state["as2_zoom_start"] or sel_end != st.session_state["as2_zoom_end"]:
+                    st.session_state["as2_zoom_start"] = sel_start
+                    st.session_state["as2_zoom_end"] = sel_end
+                    st.rerun()
 
     with st.expander("💡 Lab Question: Comparison & Noise Discussion"):
-      st.markdown(
-          """
+        st.markdown(
+            """
             * **Comparison with Assignment 1:**
               * In Assignment 1, you plotted uncalibrated raw voltage/counts directly from `c3d["Analogs"]`.
               * In Assignment 2, calibration matrices and amplifier gain factors have transformed those electrical signals into calibrated forces in Newtons (N).
@@ -1117,10 +1150,9 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
               * **Baseline Noise:** The unloaded baseline has slight fluctuations (~5–10 N) compared to the raw ADC voltage.
               * **Impact Transients vs. Noise:** Notice the sharp, high-frequency oscillations during the initial 50 ms of heel strike (the heel impact transient). This is **not purely electronic noise**; it reflects physical mechanical shock propagation through the leg skeleton and the natural resonance/vibration frequency of the force plate mounting structure.
             """
-      )
+        )
 
     st.markdown("---")
-
 # =========================================================================
   # ASSIGNMENT 3: 6-COMPONENT GROUND REACTION FORCES & MOMENTS
   # =========================================================================
