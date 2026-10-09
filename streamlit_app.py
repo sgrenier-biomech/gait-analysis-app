@@ -1038,14 +1038,13 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.markdown("---")
 
 # --- Part 3: Zoomed-In Single Foot Strike ---
-# --- Part 3: Zoomed-In Single Foot Strike ---
     st.markdown("#### Part 3: Zoomed-In Single Foot Strike")
-    st.caption("Adjust the inputs or click-and-drag directly on the plot to isolate a single stance phase.")
+    st.caption("Click-and-drag horizontally across the graph to zoom, or fine-tune with the numerical inputs below.")
 
     t_fp_start = float(raw_fp_ts.time[0])
     t_fp_end = float(raw_fp_ts.time[-1])
 
-    # 1. Automatically identify stance bounds where |Fz| > 50 N
+    # 1. Automatic initial detection
     fz_trace = (
         raw_fp_ts.data[f"F{p_num}Z"]
         if f"F{p_num}Z" in raw_fp_ts.data
@@ -1059,52 +1058,48 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         auto_start = t_fp_start + 0.5
         auto_end = auto_start + 0.8
 
-    # 2. Seed session state values once
-    if "as2_zoom_start" not in st.session_state:
-        st.session_state["as2_zoom_start"] = round(max(t_fp_start, auto_start), 3)
-    if "as2_zoom_end" not in st.session_state:
-        st.session_state["as2_zoom_end"] = round(min(t_fp_end, auto_end), 3)
-    if "last_box_sel" not in st.session_state:
-        st.session_state["last_box_sel"] = None
+    # 2. Seed the exact widget keys in session_state on first load
+    if "input_as2_start" not in st.session_state:
+        st.session_state["input_as2_start"] = round(max(t_fp_start, auto_start), 3)
+    if "input_as2_end" not in st.session_state:
+        st.session_state["input_as2_end"] = round(min(t_fp_end, auto_end), 3)
+    if "prev_box_range" not in st.session_state:
+        st.session_state["prev_box_range"] = None
 
-    # 3. Process incoming chart selection from the prior interaction
-    chart_state = st.session_state.get("as2_grf_zoom_plot")
-    if chart_state and "selection" in chart_state:
-        boxes = chart_state["selection"].get("box", [])
-        if boxes:
-            x_box = boxes[0].get("x", [])
-            if len(x_box) == 2 and x_box != st.session_state["last_box_sel"]:
-                st.session_state["last_box_sel"] = x_box
-                st.session_state["as2_zoom_start"] = round(max(t_fp_start, float(x_box[0])), 3)
-                st.session_state["as2_zoom_end"] = round(min(t_fp_end, float(x_box[1])), 3)
+    # 3. Check for selection returned from the previous interaction
+    chart_event = st.session_state.get("as2_grf_zoom_plot")
+    if chart_event and "selection" in chart_event:
+        box_list = chart_event["selection"].get("box", [])
+        if box_list:
+            x_box = box_list[0].get("x", [])
+            if len(x_box) == 2 and x_box != st.session_state["prev_box_range"]:
+                st.session_state["prev_box_range"] = x_box
+                # Directly update the widget keys so the inputs change
+                st.session_state["input_as2_start"] = round(max(t_fp_start, float(x_box[0])), 3)
+                st.session_state["input_as2_end"] = round(min(t_fp_end, float(x_box[1])), 3)
 
-    # 4. Input widgets connected directly to session_state
+    # 4. Numerical Inputs (tied to the updated keys)
     col_z1, col_z2 = st.columns(2)
     with col_z1:
         strike_zoom_s = st.number_input(
             "Foot Strike Window Start (s):",
             min_value=t_fp_start,
             max_value=t_fp_end,
-            value=st.session_state["as2_zoom_start"],
             step=0.01,
             format="%.3f",
             key="input_as2_start",
         )
-        st.session_state["as2_zoom_start"] = strike_zoom_s
-
     with col_z2:
         strike_zoom_e = st.number_input(
             "Foot Strike Window End (s):",
             min_value=t_fp_start,
             max_value=t_fp_end,
-            value=st.session_state["as2_zoom_end"],
             step=0.01,
             format="%.3f",
             key="input_as2_end",
         )
-        st.session_state["as2_zoom_end"] = strike_zoom_e
 
-    # 5. Build plot
+    # 5. Build the Plotly figure
     fig_zoom_grf = go.Figure()
     for label, key, color in grf_channel_meta:
         if key in raw_fp_ts.data:
@@ -1129,11 +1124,12 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         hovermode="x unified",
         dragmode="select",
         selectdirection="h",
-        xaxis=dict(range=[strike_zoom_s, strike_zoom_e], autorange=False),
+        # Keep the view range strictly aligned with the current active window
+        xaxis=dict(range=[strike_zoom_s, strike_zoom_e]),
         margin=dict(l=20, r=20, t=40, b=20),
     )
 
-    # 6. Display chart (NO manual st.rerun needed)
+    # 6. Render the bidirectional chart
     st.plotly_chart(
         fig_zoom_grf,
         use_container_width=True,
