@@ -631,10 +631,11 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
 # Define dynamic tabs that unlock sequentially
   tab_labels = [
+      "3D animation"
       "Assignment 1: Raw Signals",
       "Assignment 2: CoM & GRF",
       "Assignment 3: 6-DOF GRF Analysis",
-      "Step 1: Kinematics & Cycle Selection",
+      "Assignment 4: COP",
   ]
   if st.session_state.get("cycle_locked", False):
     tab_labels.append("Step 2: GRF Decisions")
@@ -644,11 +645,36 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
 
   active_tabs = st.tabs(tab_labels)
+  
+  # =========================================================================
+  # 3D animation Tab
+  # =========================================================================
+
+
+  with active_tabs[0]:
+    st.subheader("3D Gait Animation")
+
+    markers_dict = st.session_state.get("markers")
+
+    if markers_dict is not None and hasattr(markers_dict, "data"):
+        # If your kinematics pipeline or kineticstoolkit generates an animation figure/player:
+        # e.g., ktk.Player or a custom Plotly 3D scatter animation
+        try:
+            # If using a pre-computed Plotly 3D animation figure in session_state:
+            if "animation_fig" in st.session_state:
+                st.plotly_chart(st.session_state["animation_fig"], use_container_width=True)
+            else:
+                st.info("Render the stick figure animation below or replay the trial.")
+                # Render your stick figure figure or widget here
+        except Exception as e:
+            st.error(f"Error rendering animation: {e}")
+    else:
+        st.info("Upload and process a .c3d file first to preview the 3D animation.")
 
   # =========================================================================
   # ASSIGNMENT 1: RAW SIGNALS (POINTS & ANALOGS)
   # =========================================================================
-  with active_tabs[0]:
+  with active_tabs[1]:
         # --- Assignment 1: Raw Signals ---
         st.subheader("Assignment 1: Raw Signals")
 
@@ -816,7 +842,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # =========================================================================
   # ASSIGNMENT 2: CENTRE OF MASS & GROUND REACTION FORCES
   # =========================================================================
-  with active_tabs[1]:
+  with active_tabs[2]:
     st.subheader("Assignment 2: Centre of Mass & Ground Reaction Forces")
     st.markdown(
         """
@@ -1061,7 +1087,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 # =========================================================================
   # ASSIGNMENT 3: 6-COMPONENT GROUND REACTION FORCES & MOMENTS
   # =========================================================================
-  with active_tabs[2]:
+  with active_tabs[3]:
     st.subheader(
         "Assignment 3: 6-DOF Ground Reaction Force & Moment Processing"
     )
@@ -1908,7 +1934,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # =========================================================================
   # STEP 1: KINEMATICS & GAIT CYCLE IDENTIFICATION
   # =========================================================================
-  with active_tabs[3]:
+  with active_tabs[4]:
     st.subheader("Step 1: Identify and Isolate One Gait Cycle")
     st.caption(
         "Inspect sagittal kinematics. Drag a box across one gait cycle (heel"
@@ -2079,7 +2105,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # STEP 2: GRF DECISIONS (INDEPENDENT FP1 & FP2 ZEROING)
   # =========================================================================
   if st.session_state.get("cycle_locked", False) and len(active_tabs) > 3:
-    with active_tabs[4]:
+    with active_tabs[5]:
       st.subheader("Step 2: Ground Reaction Force (GRF) Processing Decisions")
       st.caption(
           "Configure baseline zeroing and filtering for each force plate"
@@ -2287,7 +2313,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # STEP 3: COP & BUTTERFLY PLOT
   # =========================================================================
   if st.session_state.get("filter_locked", False) and len(active_tabs) > 4:
-    with active_tabs[5]:
+    with active_tabs[6]:
       st.subheader("Step 3: Center of Pressure (COP) Analysis")
       chosen_plate = st.session_state.get("chosen_plate", "FP1")
       fc_val = st.session_state.get("chosen_fc", 100)
