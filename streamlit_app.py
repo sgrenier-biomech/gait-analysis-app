@@ -1038,13 +1038,14 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.markdown("---")
 
 # --- Part 3: Zoomed-In Single Foot Strike ---
+# --- Part 3: Zoomed-In Single Foot Strike ---
     st.markdown("#### Part 3: Zoomed-In Single Foot Strike")
     st.caption("Adjust the inputs or click-and-drag directly on the plot to isolate a single stance phase.")
 
     t_fp_start = float(raw_fp_ts.time[0])
     t_fp_end = float(raw_fp_ts.time[-1])
 
-    # 1. Automatically identify stance bounds where |Fz| > 50 N (fallback baseline)
+    # 1. Automatically identify stance bounds where |Fz| > 50 N
     fz_trace = (
         raw_fp_ts.data[f"F{p_num}Z"]
         if f"F{p_num}Z" in raw_fp_ts.data
@@ -1058,13 +1059,26 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         auto_start = t_fp_start + 0.5
         auto_end = auto_start + 0.8
 
-    # 2. Seed session state once if not already present
+    # 2. Seed session state values once
     if "as2_zoom_start" not in st.session_state:
         st.session_state["as2_zoom_start"] = round(max(t_fp_start, auto_start), 3)
     if "as2_zoom_end" not in st.session_state:
         st.session_state["as2_zoom_end"] = round(min(t_fp_end, auto_end), 3)
+    if "last_box_sel" not in st.session_state:
+        st.session_state["last_box_sel"] = None
 
-    # 3. Time window input widgets
+    # 3. Process incoming chart selection from the prior interaction
+    chart_state = st.session_state.get("as2_grf_zoom_plot")
+    if chart_state and "selection" in chart_state:
+        boxes = chart_state["selection"].get("box", [])
+        if boxes:
+            x_box = boxes[0].get("x", [])
+            if len(x_box) == 2 and x_box != st.session_state["last_box_sel"]:
+                st.session_state["last_box_sel"] = x_box
+                st.session_state["as2_zoom_start"] = round(max(t_fp_start, float(x_box[0])), 3)
+                st.session_state["as2_zoom_end"] = round(min(t_fp_end, float(x_box[1])), 3)
+
+    # 4. Input widgets connected directly to session_state
     col_z1, col_z2 = st.columns(2)
     with col_z1:
         strike_zoom_s = st.number_input(
@@ -1077,6 +1091,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             key="input_as2_start",
         )
         st.session_state["as2_zoom_start"] = strike_zoom_s
+
     with col_z2:
         strike_zoom_e = st.number_input(
             "Foot Strike Window End (s):",
@@ -1089,7 +1104,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         )
         st.session_state["as2_zoom_end"] = strike_zoom_e
 
-    # 4. Construct Plotly trace data
+    # 5. Build plot
     fig_zoom_grf = go.Figure()
     for label, key, color in grf_channel_meta:
         if key in raw_fp_ts.data:
@@ -1112,33 +1127,20 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         yaxis_title="Force (N)",
         template="plotly_dark",
         hovermode="x unified",
-        dragmode="select",        # Enables box selection
-        selectdirection="h",      # Restricts drag selection horizontally to the time axis
+        dragmode="select",
+        selectdirection="h",
         xaxis=dict(range=[strike_zoom_s, strike_zoom_e], autorange=False),
         margin=dict(l=20, r=20, t=40, b=20),
     )
 
-    # 5. Render with bidirectional selection event handling
-    event_data = st.plotly_chart(
+    # 6. Display chart (NO manual st.rerun needed)
+    st.plotly_chart(
         fig_zoom_grf,
         use_container_width=True,
         on_select="rerun",
         selection_mode=["box"],
         key="as2_grf_zoom_plot",
     )
-
-    # 6. If user clicked and dragged a box on the plot, update session_state and rerun
-    if event_data and "selection" in event_data:
-        box_coords = event_data["selection"].get("box", [])
-        if box_coords:
-            x_selected = box_coords[0].get("x", [])
-            if len(x_selected) == 2:
-                sel_start = round(max(t_fp_start, float(x_selected[0])), 3)
-                sel_end = round(min(t_fp_end, float(x_selected[1])), 3)
-                if sel_start != st.session_state["as2_zoom_start"] or sel_end != st.session_state["as2_zoom_end"]:
-                    st.session_state["as2_zoom_start"] = sel_start
-                    st.session_state["as2_zoom_end"] = sel_end
-                    st.rerun()
 
     with st.expander("💡 Lab Question: Comparison & Noise Discussion"):
         st.markdown(
@@ -1153,6 +1155,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         )
 
     st.markdown("---")
+    
 # =========================================================================
   # ASSIGNMENT 3: 6-COMPONENT GROUND REACTION FORCES & MOMENTS
   # =========================================================================
