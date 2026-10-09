@@ -663,101 +663,125 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         import numpy as np
         import plotly.graph_objects as go
 
-        # 1. Standard lower-body segment pairings (checks both uppercase & lowercase)
-        standard_segments = [
-            ("RASI", "LASI"), ("LASI", "LPSI"), ("LPSI", "RPSI"), ("RPSI", "RASI"), # Pelvis
-            ("RHIP", "RKNE"), ("RKNE", "RANK"), ("RANK", "RTOE"), ("RANK", "RHEE"), ("RHEE", "RTOE"), # Right Leg
-            ("LHIP", "LKNE"), ("LKNE", "LANK"), ("LANK", "LTOE"), ("LANK", "LHEE"), ("LHEE", "LTOE"), # Left Leg
-            ("RTHI", "RKNE"), ("RTIB", "RANK"), ("LTHI", "LKNE"), ("LTIB", "LANK")  # Tracking markers (if present)
-        ]
+        # 1. Anatomical interconnections definition
+        interconnections = dict()
 
-        # Map actual available marker names case-insensitively
+        interconnections["Pelvis"] = {
+            "Color": (1, 0.5, 1),
+            "Links": [
+                ["SACR", "LASI", "RASI", "SACR"],
+                ["LASI", "LGTR", "RGTR", "RASI"],
+            ],
+        }
+        interconnections["Left Leg"] = {
+            "Color": (1, 0.5, 0),
+            "Links": [
+                ["LGTR", "LLEP", "LLML"],
+                ["LLML", "LCAL", "L5TH", "LLML"],
+            ],
+        }
+        interconnections["Right Leg"] = {
+            "Color": (0, 0.5, 1),
+            "Links": [
+                ["RGTR", "RLEP", "RLML"],
+                ["RLML", "RCAL", "R5TH", "RLML"],
+            ],
+        }
+
+        # Case-insensitive lookup for marker labels
         available_keys = list(markers_ts.data.keys())
         key_lookup = {k.upper(): k for k in available_keys}
-        
-        active_segments = [
-            (key_lookup[m1], key_lookup[m2])
-            for m1, m2 in standard_segments
-            if m1 in key_lookup and m2 in key_lookup
-        ]
 
-        # 2. Downsample frames to optimize web performance
-        # E.g., if sampling rate is 100-200 Hz, stepping every 2 or 3 frames keeps it responsive
+        # 2. Downsample frames for smooth browser animation playback
         total_frames = len(markers_ts.time)
-        step = max(1, total_frames // 150)  # Caps at ~150 keyframes
+        step = max(1, total_frames // 200)  # ~120 keyframes for fluid streaming
         frame_indices = list(range(0, total_frames, step))
 
-        # Determine global coordinate bounds for fixed axes
-        all_coords = np.concatenate([markers_ts.data[k][frame_indices, :3] for k in available_keys], axis=0)
-        # Drop NaNs for bounds check
-        valid_coords = all_coords[~np.isnan(all_coords).any(axis=1)]
-        
-        if len(valid_coords) > 0:
-            x_min, x_max = float(valid_coords[:, 0].min()), float(valid_coords[:, 0].max())
-            y_min, y_max = float(valid_coords[:, 1].min()), float(valid_coords[:, 1].max())
-            z_min, z_max = float(valid_coords[:, 2].min()), float(valid_coords[:, 2].max())
+        # Calculate bounding box to keep 3D aspect ratio locked during playback
+        all_pts = []
+        for segment in interconnections.values():
+            for link in segment["Links"]:
+                for m in link:
+                    m_key = key_lookup.get(m.upper())
+                    if m_key and m_key in markers_ts.data:
+                        all_pts.append(markers_ts.data[m_key][frame_indices, :3])
+
+        if all_pts:
+            pts_concat = np.concatenate(all_pts, axis=0)
+            valid = pts_concat[~np.isnan(pts_concat).any(axis=1)]
+            if len(valid) > 0:
+                x_min, x_max = float(valid[:, 0].min()), float(valid[:, 0].max())
+                y_min, y_max = float(valid[:, 1].min()), float(valid[:, 1].max())
+                z_min, z_max = float(valid[:, 2].min()), float(valid[:, 2].max())
+            else:
+                x_min, x_max, y_min, y_max, z_min, z_max = -0.5, 0.5, -0.5, 0.5, 0, 1.5
         else:
-            x_min, x_max, y_min, y_max, z_min, z_max = -1, 1, -1, 1, 0, 1.5
+            x_min, x_max, y_min, y_max, z_min, z_max = -0.5, 0.5, -0.5, 0.5, 0, 1.5
 
-        def get_frame_data(f_idx):
-            # Extract marker points
-            px, py, pz, pnames = [], [], [], []
-            for name in available_keys:
-                pos = markers_ts.data[name][f_idx]
-                if not np.isnan(pos[:3]).any():
-                    px.append(pos[0])
-                    py.append(pos[1])
-                    pz.append(pos[2])
-                    pnames.append(name)
+        def build_frame_data(f_idx):
+            data_traces = []
 
-            # Extract stick-figure connecting line segments (separated by None)
-            lx, ly, lz = [], [], []
-            for m1, m2 in active_segments:
-                p1 = markers_ts.data[m1][f_idx]
-                p2 = markers_ts.data[m2][f_idx]
-                if not np.isnan(p1[:3]).any() and not np.isnan(p2[:3]).any():
-                    lx.extend([p1[0], p2[0], None])
-                    ly.extend([p1[1], p2[1], None])
-                    lz.extend([p1[2], p2[2], None])
+            # Trace 0: Marker nodes
+            mx, my, mz, mlabels = [], [], [], []
+            for m_upper, actual_key in key_lookup.items():
+                pt = markers_ts.data[actual_key][f_idx]
+                if not np.isnan(pt[:3]).any():
+                    mx.append(pt[0])
+                    my.append(pt[1])
+                    mz.append(pt[2])
+                    mlabels.append(actual_key)
 
-            return px, py, pz, pnames, lx, ly, lz
-
-        # Base Frame (Frame 0)
-        f0_idx = frame_indices[0]
-        f0_px, f0_py, f0_pz, f0_names, f0_lx, f0_ly, f0_lz = get_frame_data(f0_idx)
-
-        scatter_trace = go.Scatter3d(
-            x=f0_px, y=f0_py, z=f0_pz,
-            mode="markers",
-            marker=dict(size=4, color="#ef4444"),
-            text=f0_names,
-            hoverinfo="text",
-            name="Markers"
-        )
-
-        lines_trace = go.Scatter3d(
-            x=f0_lx, y=f0_ly, z=f0_lz,
-            mode="lines",
-            line=dict(color="#3b82f6", width=4),
-            hoverinfo="none",
-            name="Segments"
-        )
-
-        # 3. Construct animation frames
-        frames = []
-        for idx in frame_indices:
-            px, py, pz, pnames, lx, ly, lz = get_frame_data(idx)
-            frames.append(
-                go.Frame(
-                    data=[
-                        go.Scatter3d(x=px, y=py, z=pz, text=pnames),
-                        go.Scatter3d(x=lx, y=ly, z=lz)
-                    ],
-                    name=f"f_{idx}"
+            data_traces.append(
+                go.Scatter3d(
+                    x=mx, y=my, z=mz,
+                    mode="markers",
+                    marker=dict(size=3.5, color="#e2e8f0"),
+                    text=mlabels,
+                    hoverinfo="text",
+                    name="Markers"
                 )
             )
 
-        # 4. Slider & UI Controls
+            # Traces 1+: One line trace per interconnected anatomical group
+            for group_name, group_info in interconnections.items():
+                r, g, b = [int(c * 255) for c in group_info["Color"]]
+                color_str = f"rgb({r},{g},{b})"
+
+                lx, ly, lz = [], [], []
+                for link in group_info["Links"]:
+                    for i in range(len(link) - 1):
+                        m1 = key_lookup.get(link[i].upper())
+                        m2 = key_lookup.get(link[i + 1].upper())
+                        if m1 and m2 and m1 in markers_ts.data and m2 in markers_ts.data:
+                            p1 = markers_ts.data[m1][f_idx]
+                            p2 = markers_ts.data[m2][f_idx]
+                            if not np.isnan(p1[:3]).any() and not np.isnan(p2[:3]).any():
+                                lx.extend([p1[0], p2[0], None])
+                                ly.extend([p1[1], p2[1], None])
+                                lz.extend([p1[2], p2[2], None])
+
+                data_traces.append(
+                    go.Scatter3d(
+                        x=lx, y=ly, z=lz,
+                        mode="lines",
+                        line=dict(color=color_str, width=5),
+                        name=group_name,
+                        hoverinfo="none"
+                    )
+                )
+
+            return data_traces
+
+        # Initial baseline frame
+        initial_traces = build_frame_data(frame_indices[0])
+
+        # Animation keyframes
+        frames = [
+            go.Frame(data=build_frame_data(idx), name=f"f_{idx}")
+            for idx in frame_indices
+        ]
+
+        # Slider scrubber
         sliders = [{
             "steps": [
                 {
@@ -771,27 +795,25 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             "pad": {"t": 30}
         }]
 
-        fig_anim = go.Figure(
-            data=[scatter_trace, lines_trace],
-            frames=frames
-        )
+        fig_stick = go.Figure(data=initial_traces, frames=frames)
 
-        fig_anim.update_layout(
+        fig_stick.update_layout(
             scene=dict(
-                xaxis=dict(range=[x_min, x_max], title="X (m)"),
-                yaxis=dict(range=[y_min, y_max], title="Y (m)"),
-                zaxis=dict(range=[z_min, z_max], title="Z (m)"),
+                xaxis=dict(range=[x_min, x_max], title="X (Mediolateral)"),
+                yaxis=dict(range=[y_min, y_max], title="Y (Anteroposterior)"),
+                zaxis=dict(range=[z_min, z_max], title="Z (Vertical)"),
                 aspectmode="data"
             ),
             updatemenus=[{
                 "type": "buttons",
                 "showactive": False,
-                "x": 0.05, "y": 1.15,
+                "x": 0.05,
+                "y": 1.15,
                 "buttons": [
                     {
                         "label": "▶ Play",
                         "method": "animate",
-                        "args": [None, {"frame": {"duration": 35, "redraw": True}, "fromcurrent": True, "transition": {"duration": 0}}]
+                        "args": [None, {"frame": {"duration": 30, "redraw": True}, "fromcurrent": True, "transition": {"duration": 0}}]
                     },
                     {
                         "label": "⏸ Pause",
@@ -801,15 +823,15 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
                 ]
             }],
             sliders=sliders,
-            height=600,
+            height=620,
             margin=dict(l=0, r=0, t=30, b=0)
         )
 
-        st.plotly_chart(fig_anim, use_container_width=True)
+        st.plotly_chart(fig_stick, use_container_width=True)
 
     else:
         st.info("Upload and process a .c3d file first to preview the 3D stick-figure animation.")
-
+        
   # =========================================================================
   # ASSIGNMENT 1: RAW SIGNALS (POINTS & ANALOGS)
   # =========================================================================
