@@ -654,26 +654,161 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # =========================================================================
 
 
-  with active_tabs[0]:
+with active_tabs[0]:
     st.subheader("3D Gait Animation")
 
-    markers_dict = st.session_state.get("markers")
+    markers_ts = st.session_state.get("markers")
 
-    if markers_dict is not None and hasattr(markers_dict, "data"):
-        # If your kinematics pipeline or kineticstoolkit generates an animation figure/player:
-        # e.g., ktk.Player or a custom Plotly 3D scatter animation
-        try:
-            # If using a pre-computed Plotly 3D animation figure in session_state:
-            if "animation_fig" in st.session_state:
-                st.plotly_chart(st.session_state["animation_fig"], use_container_width=True)
-            else:
-                st.info("Render the stick figure animation below or replay the trial.")
-                # Render your stick figure figure or widget here
-        except Exception as e:
-            st.error(f"Error rendering animation: {e}")
+    if markers_ts is not None and hasattr(markers_ts, "data"):
+        import numpy as np
+        import plotly.graph_objects as go
+
+        # 1. Standard lower-body segment pairings (checks both uppercase & lowercase)
+        standard_segments = [
+            ("RASI", "LASI"), ("LASI", "LPSI"), ("LPSI", "RPSI"), ("RPSI", "RASI"), # Pelvis
+            ("RHIP", "RKNE"), ("RKNE", "RANK"), ("RANK", "RTOE"), ("RANK", "RHEE"), ("RHEE", "RTOE"), # Right Leg
+            ("LHIP", "LKNE"), ("LKNE", "LANK"), ("LANK", "LTOE"), ("LANK", "LHEE"), ("LHEE", "LTOE"), # Left Leg
+            ("RTHI", "RKNE"), ("RTIB", "RANK"), ("LTHI", "LKNE"), ("LTIB", "LANK")  # Tracking markers (if present)
+        ]
+
+        # Map actual available marker names case-insensitively
+        available_keys = list(markers_ts.data.keys())
+        key_lookup = {k.upper(): k for k in available_keys}
+        
+        active_segments = [
+            (key_lookup[m1], key_lookup[m2])
+            for m1, m2 in standard_segments
+            if m1 in key_lookup and m2 in key_lookup
+        ]
+
+        # 2. Downsample frames to optimize web performance
+        # E.g., if sampling rate is 100-200 Hz, stepping every 2 or 3 frames keeps it responsive
+        total_frames = len(markers_ts.time)
+        step = max(1, total_frames // 150)  # Caps at ~150 keyframes
+        frame_indices = list(range(0, total_frames, step))
+
+        # Determine global coordinate bounds for fixed axes
+        all_coords = np.concatenate([markers_ts.data[k][frame_indices, :3] for k in available_keys], axis=0)
+        # Drop NaNs for bounds check
+        valid_coords = all_coords[~np.isnan(all_coords).any(axis=1)]
+        
+        if len(valid_coords) > 0:
+            x_min, x_max = float(valid_coords[:, 0].min()), float(valid_coords[:, 0].max())
+            y_min, y_max = float(valid_coords[:, 1].min()), float(valid_coords[:, 1].max())
+            z_min, z_max = float(valid_coords[:, 2].min()), float(valid_coords[:, 2].max())
+        else:
+            x_min, x_max, y_min, y_max, z_min, z_max = -1, 1, -1, 1, 0, 1.5
+
+        def get_frame_data(f_idx):
+            # Extract marker points
+            px, py, pz, pnames = [], [], [], []
+            for name in available_keys:
+                pos = markers_ts.data[name][f_idx]
+                if not np.isnan(pos[:3]).any():
+                    px.append(pos[0])
+                    py.append(pos[1])
+                    pz.append(pos[2])
+                    pnames.append(name)
+
+            # Extract stick-figure connecting line segments (separated by None)
+            lx, ly, lz = [], [], []
+            for m1, m2 in active_segments:
+                p1 = markers_ts.data[m1][f_idx]
+                p2 = markers_ts.data[m2][f_idx]
+                if not np.isnan(p1[:3]).any() and not np.isnan(p2[:3]).any():
+                    lx.extend([p1[0], p2[0], None])
+                    ly.extend([p1[1], p2[1], None])
+                    lz.extend([p1[2], p2[2], None])
+
+            return px, py, pz, pnames, lx, ly, lz
+
+        # Base Frame (Frame 0)
+        f0_idx = frame_indices[0]
+        f0_px, f0_py, f0_pz, f0_names, f0_lx, f0_ly, f0_lz = get_frame_data(f0_idx)
+
+        scatter_trace = go.Scatter3d(
+            x=f0_px, y=f0_py, z=f0_pz,
+            mode="markers",
+            marker=dict(size=4, color="#ef4444"),
+            text=f0_names,
+            hoverinfo="text",
+            name="Markers"
+        )
+
+        lines_trace = go.Scatter3d(
+            x=f0_lx, y=f0_ly, z=f0_lz,
+            mode="lines",
+            line=dict(color="#3b82f6", width=4),
+            hoverinfo="none",
+            name="Segments"
+        )
+
+        # 3. Construct animation frames
+        frames = []
+        for idx in frame_indices:
+            px, py, pz, pnames, lx, ly, lz = get_frame_data(idx)
+            frames.append(
+                go.Frame(
+                    data=[
+                        go.Scatter3d(x=px, y=py, z=pz, text=pnames),
+                        go.Scatter3d(x=lx, y=ly, z=lz)
+                    ],
+                    name=f"f_{idx}"
+                )
+            )
+
+        # 4. Slider & UI Controls
+        sliders = [{
+            "steps": [
+                {
+                    "method": "animate",
+                    "args": [[f.name], {"mode": "immediate", "frame": {"duration": 0, "redraw": True}, "transition": {"duration": 0}}],
+                    "label": f"{markers_ts.time[idx]:.2f}s"
+                }
+                for idx, f in zip(frame_indices, frames)
+            ],
+            "currentvalue": {"prefix": "Time: ", "visible": True},
+            "pad": {"t": 30}
+        }]
+
+        fig_anim = go.Figure(
+            data=[scatter_trace, lines_trace],
+            frames=frames
+        )
+
+        fig_anim.update_layout(
+            scene=dict(
+                xaxis=dict(range=[x_min, x_max], title="X (m)"),
+                yaxis=dict(range=[y_min, y_max], title="Y (m)"),
+                zaxis=dict(range=[z_min, z_max], title="Z (m)"),
+                aspectmode="data"
+            ),
+            updatemenus=[{
+                "type": "buttons",
+                "showactive": False,
+                "x": 0.05, "y": 1.15,
+                "buttons": [
+                    {
+                        "label": "▶ Play",
+                        "method": "animate",
+                        "args": [None, {"frame": {"duration": 35, "redraw": True}, "fromcurrent": True, "transition": {"duration": 0}}]
+                    },
+                    {
+                        "label": "⏸ Pause",
+                        "method": "animate",
+                        "args": [[None], {"mode": "immediate", "frame": {"duration": 0, "redraw": False}, "transition": {"duration": 0}}]
+                    }
+                ]
+            }],
+            sliders=sliders,
+            height=600,
+            margin=dict(l=0, r=0, t=30, b=0)
+        )
+
+        st.plotly_chart(fig_anim, use_container_width=True)
+
     else:
-        st.info("Upload and process a .c3d file first to preview the 3D animation.")
-
+        st.info("Upload and process a .c3d file first to preview the 3D stick-figure animation.")
   # =========================================================================
   # ASSIGNMENT 1: RAW SIGNALS (POINTS & ANALOGS)
   # =========================================================================
