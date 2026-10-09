@@ -636,7 +636,10 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       "Assignment 2: CoM & GRF",
       "Assignment 3: 6-DOF GRF Analysis",
       "Assignment 4: COP",
+      "placeholder1",
+      "placeholder2"
   ]
+  
   if st.session_state.get("cycle_locked", False):
     tab_labels.append("Step 2: GRF Decisions")
   if st.session_state.get("filter_locked", False):
