@@ -1803,237 +1803,229 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     f_col1, f_col2 = st.columns(2)
     with f_col1:
-      as3_filter_mode = st.selectbox(
-          "Filter Algorithm:",
-          [
-              "Butterworth Low-pass",
-              "Butterworth High-pass",
-              "Moving Average Smoothing",
-              "None (Raw)",
-          ],
-          index=0,
-          key="as3_filt_sel_step4",
-      )
+        as3_filter_mode = st.selectbox(
+            "Filter Algorithm:",
+            [
+                "Butterworth Low-pass",
+                "Butterworth High-pass",
+                "Moving Average Smoothing",
+                "None (Raw)",
+            ],
+            index=0,
+            key="as3_filt_sel_step4",
+        )
 
     with f_col2:
-      as3_fc = None
-      as3_smooth_window = None
+        as3_fc = None
+        as3_smooth_window = None
 
-      if as3_filter_mode == "Butterworth Low-pass":
-        as3_fc = st.slider(
-            "Low-pass Cutoff Frequency Fc (Hz):",
-            min_value=5,
-            max_value=200,
-            value=100,
-            step=5,
-            key="as3_fc_slider_lp",
-            help="Attenuates frequencies higher than Fc (mains hum, plate vibrations).",
-        )
-      elif as3_filter_mode == "Butterworth High-pass":
-        as3_fc = st.slider(
-            "High-pass Cutoff Frequency Fc (Hz):",
-            min_value=1,
-            max_value=50,
-            value=10,
-            step=1,
-            key="as3_fc_slider_hp",
-            help="Attenuates frequencies lower than Fc (low-frequency baseline drift).",
-        )
-      elif as3_filter_mode == "Moving Average Smoothing":
-        as3_smooth_window = st.slider(
-            "Smoothing Window Length (Samples):",
-            min_value=3,
-            max_value=101,
-            value=11,
-            step=2,
-            key="as3_smooth_slider",
-            help="Number of samples across the moving average kernel (must be odd).",
-        )
-      else:
-        st.caption("Displaying unfiltered raw data.")
+        if as3_filter_mode == "Butterworth Low-pass":
+            as3_fc = st.slider(
+                "Low-pass Cutoff Frequency Fc (Hz):",
+                min_value=5,
+                max_value=200,
+                value=25,
+                step=5,
+                key="as3_fc_slider_lp",
+                help="Attenuates frequencies higher than Fc (mains hum, plate vibrations).",
+            )
+        elif as3_filter_mode == "Butterworth High-pass":
+            as3_fc = st.slider(
+                "High-pass Cutoff Frequency Fc (Hz):",
+                min_value=1,
+                max_value=50,
+                value=10,
+                step=1,
+                key="as3_fc_slider_hp",
+                help="Attenuates frequencies lower than Fc (low-frequency baseline drift).",
+            )
+        elif as3_filter_mode == "Moving Average Smoothing":
+            as3_smooth_window = st.slider(
+                "Smoothing Window Length (Samples):",
+                min_value=3,
+                max_value=101,
+                value=11,
+                step=2,
+                key="as3_smooth_slider",
+                help="Number of samples across the moving average kernel (must be odd).",
+            )
+        else:
+            st.caption("Displaying unfiltered raw data.")
 
     # -------------------------------------------------------------
     # Compute Pipeline Transformations
     # -------------------------------------------------------------
     raw_base_ts = raw_fp1 if as3_plate == "FP1" else raw_fp2
     p_num = "1" if as3_plate == "FP1" else "2"
+
+    # Identify user-selected components from Step 2a/2b
+    active_selected_comps = (
+        st.session_state.get("as3_fp1_components", [f"F1X", f"F1Y", f"F1Z"])
+        if as3_plate == "FP1"
+        else st.session_state.get("as3_fp2_components", [f"F2X", f"F2Y", f"F2Z"])
+    )
+
+    # 1. Retrieve Debiased Source (from Step 2) or Raw Baseline
+    debiased_store_key = f"as3_fp{p_num}_debiased_data"
+    debiased_dict = st.session_state.get(debiased_store_key, None)
+
     fp_work = copy.deepcopy(raw_base_ts)
+    if debiased_dict is not None and st.session_state.get(f"as3_FP{p_num}_debias_applied", False):
+        for k, v in debiased_dict.items():
+            if k in fp_work.data:
+                fp_work.data[k] = np.copy(v)
 
-    # 1. Scaling
-    if apply_scale:
-      for f_key in [f"F{p_num}X", f"F{p_num}Y", f"F{p_num}Z"]:
-        if f_key in fp_work.data:
-          fp_work.data[f_key] = fp_work.data[f_key] * 1.0
-    if apply_moment_scale:
-      for m_key in [f"M{p_num}X", f"M{p_num}Y", f"M{p_num}Z"]:
-        if m_key in fp_work.data:
-          fp_work.data[m_key] = fp_work.data[m_key] * 1.0
+    # 2. Slice strictly across the isolated Step 3 window
+    win_s = float(st.session_state.get("as3_win_s", as3_t_start))
+    win_e = float(st.session_state.get("as3_win_e", as3_t_end))
 
-    # 2. Debiasing using plate-specific baseline interval
-    is_debiased_applied = st.session_state[f"as3_{as3_plate}_debias_applied"]
-    plat_b_start = st.session_state[f"as3_{as3_plate}_base_s"]
-    plat_b_end = st.session_state[f"as3_{as3_plate}_base_e"]
+    mask_window = (raw_base_ts.time >= win_s) & (raw_base_ts.time <= win_e)
+    if not np.any(mask_window):
+        mask_window = np.ones_like(raw_base_ts.time, dtype=bool)
 
-    if is_debiased_applied and plat_b_end > plat_b_start:
-      b_p_s = max(0.0, min(1.0, (plat_b_start - k_t_start) / kin_duration))
-      b_p_e = max(0.0, min(1.0, (plat_b_end - k_t_start) / kin_duration))
-      b_i_s = int(b_p_s * n_total_fp)
-      b_i_e = max(b_i_s + 1, int(b_p_e * n_total_fp))
-      for k in fp_work.data.keys():
-        bias_val = np.nanmean(fp_work.data[k][b_i_s:b_i_e])
-        fp_work.data[k] -= bias_val
+    time_window = raw_base_ts.time[mask_window]
 
-    # 3. Slicing Footstrikes Window
-    w_p_s = max(0.0, min(1.0, (as3_t_start - k_t_start) / kin_duration))
-    w_p_e = max(0.0, min(1.0, (as3_t_end - k_t_start) / kin_duration))
-    w_i_s = int(w_p_s * n_total_fp)
-    w_i_e = max(w_i_s + 2, int(w_p_e * n_total_fp))
-
-    n_samples_window = w_i_e - w_i_s
-    time_window = np.linspace(as3_t_start, as3_t_end, n_samples_window)
-
+    # Create windowed TimeSeries objects for raw and debiased signals
     window_raw_ts = ktk.TimeSeries(time=time_window)
-    for k in fp_work.data.keys():
-      window_raw_ts.data[k] = np.copy(raw_base_ts.data[k][w_i_s:w_i_e])
-
     window_processed_ts = ktk.TimeSeries(time=time_window)
-    for k in fp_work.data.keys():
-      window_processed_ts.data[k] = np.copy(fp_work.data[k][w_i_s:w_i_e])
 
-# 4. Filtering / Smoothing Application
+    for k in raw_base_ts.data.keys():
+        window_raw_ts.data[k] = np.copy(raw_base_ts.data[k][mask_window])
+        window_processed_ts.data[k] = np.copy(fp_work.data[k][mask_window])
+
+    # 3. Filtering / Smoothing Application
     filter_legend_label = "Processed"
     window_filtered_ts = copy.deepcopy(window_processed_ts)
 
     try:
-      if as3_filter_mode == "Butterworth Low-pass" and as3_fc is not None:
-        window_filtered_ts = ktk.filters.butter(window_processed_ts, fc=as3_fc)
-        window_filtered_ts.time = time_window
-        filter_legend_label = f"Low-pass ({as3_fc} Hz)"
+        if as3_filter_mode == "Butterworth Low-pass" and as3_fc is not None:
+            window_filtered_ts = ktk.filters.butter(window_processed_ts, fc=as3_fc)
+            window_filtered_ts.time = time_window
+            filter_legend_label = f"Low-pass ({as3_fc} Hz)"
 
-      elif as3_filter_mode == "Butterworth High-pass" and as3_fc is not None:
-        # High-pass: Raw minus Low-pass baseline
-        lp_baseline = ktk.filters.butter(window_processed_ts, fc=as3_fc)
-        for k in window_filtered_ts.data.keys():
-          window_filtered_ts.data[k] = (
-              window_processed_ts.data[k] - lp_baseline.data[k]
-          )
-        window_filtered_ts.time = time_window
-        filter_legend_label = f"High-pass ({as3_fc} Hz)"
+        elif as3_filter_mode == "Butterworth High-pass" and as3_fc is not None:
+            lp_baseline = ktk.filters.butter(window_processed_ts, fc=as3_fc)
+            for k in window_filtered_ts.data.keys():
+                window_filtered_ts.data[k] = (
+                    window_processed_ts.data[k] - lp_baseline.data[k]
+                )
+            window_filtered_ts.time = time_window
+            filter_legend_label = f"High-pass ({as3_fc} Hz)"
 
-      elif (
-          as3_filter_mode == "Moving Average Smoothing"
-          and as3_smooth_window is not None
-      ):
-        window_filtered_ts = ktk.filters.smooth(
-            window_processed_ts, window_length=as3_smooth_window
-        )
-        window_filtered_ts.time = time_window
-        filter_legend_label = f"Smoothed ({as3_smooth_window} pts)"
+        elif (
+            as3_filter_mode == "Moving Average Smoothing"
+            and as3_smooth_window is not None
+        ):
+            window_filtered_ts = ktk.filters.smooth(
+                window_processed_ts, window_length=as3_smooth_window
+            )
+            window_filtered_ts.time = time_window
+            filter_legend_label = f"Smoothed ({as3_smooth_window} pts)"
 
-      else:
+        else:
+            window_filtered_ts = copy.deepcopy(window_processed_ts)
+            filter_legend_label = "Processed (Unfiltered)"
+    except Exception as e:
+        st.warning(f"Filter could not be applied ({e}). Falling back to unfiltered data.")
         window_filtered_ts = copy.deepcopy(window_processed_ts)
         filter_legend_label = "Processed (Unfiltered)"
-    except Exception as e:
-      st.warning(
-          f"Filter could not be applied ({e}). Falling back to unfiltered data."
-      )
-      window_filtered_ts = copy.deepcopy(window_processed_ts)
-      filter_legend_label = "Processed (Unfiltered)"
-      
-      
+
     st.markdown("---")
 
     # -------------------------------------------------------------
-    # 6-Component Output Display
+    # Selected Component Output Display
     # -------------------------------------------------------------
-    st.markdown(f"#### Six-Component Kinetic Plots ({as3_plate}: 2 Footstrikes)")
+    st.markdown(f"#### Filtered Force Component Plots ({as3_plate}: Zoomed Footstrike)")
 
-    component_specs = [
+    all_specs = [
         (
             f"F{p_num}X",
-            "Fx: Medio-Lateral Force (Side-to-Side Shear)",
+            f"F{p_num}X: Medio-Lateral Force (Side-to-Side Shear)",
             "Force (N)",
             "#ef4444",
         ),
         (
             f"F{p_num}Y",
-            "Fy: Antero-Posterior Force (Braking & Propulsion)",
+            f"F{p_num}Y: Antero-Posterior Force (Braking & Propulsion)",
             "Force (N)",
             "#22c55e",
         ),
         (
             f"F{p_num}Z",
-            "Fz: Vertical Ground Reaction Force (Weight Bearing)",
+            f"F{p_num}Z: Vertical Ground Reaction Force (Weight Bearing)",
             "Force (N)",
             "#3b82f6",
         ),
         (
             f"M{p_num}X",
-            "Mx: Moment about Medio-Lateral Axis",
+            f"M{p_num}X: Moment about Medio-Lateral Axis",
             "Moment (N·m)",
             "#f97316",
         ),
         (
             f"M{p_num}Y",
-            "My: Moment about Antero-Posterior Axis",
+            f"M{p_num}Y: Moment about Antero-Posterior Axis",
             "Moment (N·m)",
             "#eab308",
         ),
         (
             f"M{p_num}Z",
-            "Mz: Free Moment about Vertical Axis",
+            f"M{p_num}Z: Free Moment about Vertical Axis",
             "Moment (N·m)",
             "#a855f7",
         ),
     ]
 
+    # Filter to only show components that were selected in Step 2 (plus any available moments)
+    display_specs = [
+        spec for spec in all_specs 
+        if spec[0] in active_selected_comps or (spec[0].startswith("M") and spec[0] in raw_base_ts.data)
+    ]
+
     col_g1, col_g2 = st.columns(2)
 
-    for i, (ch_key, comp_title, y_label, comp_color) in enumerate(
-        component_specs
-    ):
-      target_col = col_g1 if (i % 2 == 0) else col_g2
-      with target_col:
-        fig_comp = go.Figure()
+    for i, (ch_key, comp_title, y_label, comp_color) in enumerate(display_specs):
+        target_col = col_g1 if (i % 2 == 0) else col_g2
+        with target_col:
+            fig_comp = go.Figure()
 
-        if ch_key in window_raw_ts.data:
-          y_raw = np.asarray(window_raw_ts.data[ch_key]).squeeze()
-          fig_comp.add_trace(
-              go.Scatter(
-                  x=window_raw_ts.time,
-                  y=y_raw,
-                  mode="lines",
-                  name="Unprocessed (Raw)",
-                  line=dict(color="#94a3b8", dash="dot", width=1.5),
-                  opacity=0.6,
-              )
-          )
+            # Pre-filtered/Debiased baseline trace
+            if ch_key in window_processed_ts.data:
+                y_proc = np.asarray(window_processed_ts.data[ch_key]).squeeze()
+                fig_comp.add_trace(
+                    go.Scatter(
+                        x=window_processed_ts.time,
+                        y=y_proc,
+                        mode="lines",
+                        name="Pre-Filtered",
+                        line=dict(color="#94a3b8", dash="dot", width=1.5),
+                        opacity=0.7,
+                    )
+                )
 
-        if (
-            window_filtered_ts is not None
-            and ch_key in window_filtered_ts.data
-        ):
-          y_filt = np.asarray(window_filtered_ts.data[ch_key]).squeeze()
-          fig_comp.add_trace(
-              go.Scatter(
-                  x=window_filtered_ts.time,
-                  y=y_filt,
-                  mode="lines",
-                  name=filter_legend_label,
-                  line=dict(color=comp_color, width=2.5),
-              )
-          )
+            # Filtered trace
+            if ch_key in window_filtered_ts.data:
+                y_filt = np.asarray(window_filtered_ts.data[ch_key]).squeeze()
+                fig_comp.add_trace(
+                    go.Scatter(
+                        x=window_filtered_ts.time,
+                        y=y_filt,
+                        mode="lines",
+                        name=filter_legend_label,
+                        line=dict(color=comp_color, width=2.5),
+                    )
+                )
 
-        fig_comp.update_layout(
-            title=comp_title,
-            xaxis_title="Time (s)",
-            yaxis_title=y_label,
-            template="plotly_dark",
-            hovermode="x unified",
-            margin=dict(l=20, r=20, t=40, b=20),
-            xaxis=dict(range=[as3_t_start, as3_t_end], autorange=False),
-        )
-        st.plotly_chart(fig_comp, use_container_width=True)
+            fig_comp.update_layout(
+                title=comp_title,
+                xaxis_title="Time (s)",
+                yaxis_title=y_label,
+                template="plotly_dark",
+                hovermode="x unified",
+                margin=dict(l=20, r=20, t=40, b=20),
+                xaxis=dict(range=[win_s, win_e], autorange=False),
+            )
+            st.plotly_chart(fig_comp, use_container_width=True)
         
     # -------------------------------------------------------------
     # 5. Assignment Helper & Theory Explanations
