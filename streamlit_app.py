@@ -654,7 +654,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
   # =========================================================================
 
 
-with active_tabs[0]:
+  with active_tabs[0]:
     st.subheader("3D Gait Animation")
 
     markers_ts = st.session_state.get("markers")
@@ -809,6 +809,7 @@ with active_tabs[0]:
 
     else:
         st.info("Upload and process a .c3d file first to preview the 3D stick-figure animation.")
+
   # =========================================================================
   # ASSIGNMENT 1: RAW SIGNALS (POINTS & ANALOGS)
   # =========================================================================
