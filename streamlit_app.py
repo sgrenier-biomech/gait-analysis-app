@@ -2467,11 +2467,13 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     st.markdown("---")
 
-    # -------------------------------------------------------------------------
-    # PART 2: ISOLATED FOOT STRIKE INTERVALS (SINGLE FOOT SELECTION)
+# -------------------------------------------------------------------------
+    # PART 2: ISOLATED FOOT STRIKE INTERVALS (AUTOMATIC DETECTION)
     # -------------------------------------------------------------------------
     st.markdown("### Part 2: Isolated Foot Strike Intervals")
-    st.caption("Select which foot you are isolating, then define the contact and toe-off boundaries for 5 distinct strikes.")
+    st.caption(
+        "Foot strikes matching your Part 1 criteria (threshold, polarity, and decision rule) are automatically detected and populated below."
+    )
 
     as4_active_foot = st.radio(
         "Select Foot to Analyze (5 Strikes):",
@@ -2480,39 +2482,95 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         key="as4_active_foot_radio",
     )
 
-    if "as4_strike_windows" not in st.session_state:
-      st.session_state["as4_strike_windows"] = {
-          "Left Foot": [
-              [round(t_min + 1.0 + i * 2.2, 3), round(t_min + 1.6 + i * 2.2, 3)]
-              for i in range(5)
-          ],
-          "Right Foot": [
-              [round(t_min + 2.1 + i * 2.2, 3), round(t_min + 2.7 + i * 2.2, 3)]
-              for i in range(5)
-          ],
-      }
+    # 1. Automatic Boundary Detection Engine
+    auto_detected_strikes = []
 
+    if detection_channel is not None and "filt_sig_data" in locals() and thresh_val != 0.0:
+      # Boolean mask of where condition is met
+      if event_polarity == "Signal Falls Below Threshold (<)":
+        active_condition = filt_sig_data < thresh_val
+      else:  # Default / "Signal Exceeds Threshold (>)"
+        active_condition = filt_sig_data > thresh_val
+
+      # First derivative zero-crossing logic check
+      if detection_logic == "First Derivative Zero-Crossing (Velocity Peak)":
+        diff_sig = np.diff(filt_sig_data, prepend=filt_sig_data[0])
+        active_condition = active_condition & (np.abs(diff_sig) > 0.01)
+
+      # Find contiguous segments of True in active_condition
+      is_active = active_condition.astype(int)
+      diff_edges = np.diff(is_active, prepend=0)
+
+      starts = np.where(diff_edges == 1)[0]
+      ends = np.where(diff_edges == -1)[0]
+
+      # Handle edge boundary if signal ends while still active
+      if len(starts) > len(ends):
+        ends = np.append(ends, len(is_active) - 1)
+
+      # Filter out blips (< 150 ms) to keep true stance phases
+      min_samples = int(0.15 * fs_rate)
+      for s_idx, e_idx in zip(starts, ends):
+        if (e_idx - s_idx) >= min_samples:
+          t_contact = round(float(sig_time[s_idx]), 3)
+          t_toeoff = round(float(sig_time[e_idx]), 3)
+          auto_detected_strikes.append([t_contact, t_toeoff])
+
+    # 2. Determine State Key for Active Foot and Criteria Hash
+    criteria_signature = f"{detection_channel}_{thresh_val}_{event_polarity}_{as4_active_foot}"
+    
+    if st.session_state.get("as4_last_crit_sig") != criteria_signature:
+      st.session_state["as4_last_crit_sig"] = criteria_signature
+
+      # Initialize list with detected intervals (up to 5 strikes)
+      populated_windows = []
+      for i in range(5):
+        if i < len(auto_detected_strikes):
+          populated_windows.append(auto_detected_strikes[i])
+        else:
+          # Fallback default spacing if fewer than 5 events are detected
+          t_fallback_s = round(t_min + 1.0 + i * 2.0, 3)
+          t_fallback_e = round(t_fallback_s + 0.6, 3)
+          populated_windows.append([t_fallback_s, t_fallback_e])
+
+      if "as4_strike_windows" not in st.session_state:
+        st.session_state["as4_strike_windows"] = {}
+      st.session_state["as4_strike_windows"][as4_active_foot] = populated_windows
+
+    # Detection summary message
+    n_detected = len(auto_detected_strikes)
+    if detection_channel is None or thresh_val == 0.0:
+      st.info("ℹ️ Select a Primary Channel and non-zero Threshold in Part 1 to run automatic strike detection.")
+    elif n_detected == 0:
+      st.warning(f"⚠️ No foot strikes detected exceeding the current threshold ({thresh_val}) with polarity '{event_polarity}'. Adjust your Part 1 criteria.")
+    else:
+      st.success(f"🎯 Automatically detected **{n_detected}** strike intervals meeting criteria. First 5 assigned to **{as4_active_foot}** below:")
+
+    # 3. Render 5 Synchronized Input Columns
     cols_w = st.columns(5)
     for strike_idx in range(5):
       with cols_w[strike_idx]:
         st.markdown(f"**Strike {strike_idx + 1}**")
+        
+        cur_default = st.session_state["as4_strike_windows"][as4_active_foot][strike_idx]
+        
         w_start = st.number_input(
             f"Contact (s):",
             min_value=t_min,
             max_value=t_max,
-            value=float(st.session_state["as4_strike_windows"][as4_active_foot][strike_idx][0]),
+            value=float(cur_default[0]),
             step=0.01,
             format="%.3f",
-            key=f"as4_ws_{as4_active_foot}_{strike_idx}",
+            key=f"as4_ws_{as4_active_foot}_{strike_idx}_{st.session_state['as4_last_crit_sig']}",
         )
         w_end = st.number_input(
             f"Toe-Off (s):",
             min_value=t_min,
             max_value=t_max,
-            value=float(st.session_state["as4_strike_windows"][as4_active_foot][strike_idx][1]),
+            value=float(cur_default[1]),
             step=0.01,
             format="%.3f",
-            key=f"as4_we_{as4_active_foot}_{strike_idx}",
+            key=f"as4_we_{as4_active_foot}_{strike_idx}_{st.session_state['as4_last_crit_sig']}",
         )
         st.session_state["as4_strike_windows"][as4_active_foot][strike_idx] = [w_start, w_end]
 
