@@ -501,19 +501,18 @@ def build_threejs_kinetic_viewer(
   if grf_data is not None:
     grf_payload = {
         "cop": [
-            # c is [x_meters, y_meters, z_meters] -> Three.js [x, z_up, -y]
+            # Lab [x, y, z] -> Three.js [x, z_up, -y]
             [round(c[0], 4), round(c[2], 4), round(-c[1], 4)]
-            if c is not None else None
+            if c is not None and not np.isnan(c).any() else None
             for c in grf_data["cop"][::step]
         ],
         "force": [
-            # GRF pushing up (+Fz) and forward (+Fy) -> Three.js [Fx, Fz, -Fy]
+            # GRF upward (+z) -> Three.js (+y), forward (+y) -> Three.js (-z)
             [round(f[0], 2), round(f[2], 2), round(-f[1], 2)]
-            if f is not None else None
+            if f is not None and not np.isnan(f).any() else None
             for f in grf_data["force"][::step]
         ],
-    }
-    
+    }    
   data_payload = json.dumps({
       "times": times,
       "n_frames": n_frames,
@@ -3358,7 +3357,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         ### Submission Deliverables:
         1. **Screen Grab Video:** Record a video of your C3D trial playing in the 3D player below with:
            * **Local Coordinate Systems (LCS)** displayed at the Pelvis, Left/Right Hips, Knees, and Ankles (Red = X, Green = Y, Blue = Z).
-           * **Ground Reaction Force (GRF) Vector** (yellow arrow) dynamically anchored at the Center of Pressure (red sphere) tracking the foot strike trajectory.
+           * **Ground Reaction Force (GRF) Vector** (yellow arrow) dynamically anchored at the Center of Pressure (red sphere) tracking between the heel and 5th metatarsal during contact.
         2. **Assigned Filename:** Submit the verified filename (`{assigned_file_name}`) with your report.
         """
     )
@@ -3370,13 +3369,24 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     if markers is not None and hasattr(markers, "data") and frames_ts is not None:
       m_time = markers.time
+      n_marker_frames = len(m_time)
 
-      # 2. Determine Scale Factor (Meters vs Millimeters)
+      # 2. Determine Scaling Factor (mm vs meters)
       stacked_pts = np.concatenate([m[::5, :3] for m in markers.data.values()], axis=0)
-      marker_is_mm = float(np.nanmax(np.abs(stacked_pts))) > 50.0
-      m_to_meters = 0.001 if marker_is_mm else 1.0
+      marker_scale = 0.001 if float(np.nanmax(np.abs(stacked_pts))) > 50.0 else 1.0
 
-      # 3. Determine target platform based on Assignment 4 selections
+      # 3. Identify Foot Markers for Foot Placement (Heel and 5th Metatarsal/Toe)
+      active_foot = st.session_state.get("as4_active_foot", "Right Foot")
+      is_right = "Right" in active_foot
+
+      cal_name = "RCAL" if is_right else "LCAL"
+      # Try 5th metatarsal first, fallback to TOE if 5TH not present
+      toe_name = ("R5TH" if "R5TH" in markers.data else "RTOE") if is_right else ("L5TH" if "L5TH" in markers.data else "LTOE")
+
+      cal_pts = markers.data.get(cal_name, np.zeros((n_marker_frames, 3))) * marker_scale
+      toe_pts = markers.data.get(toe_name, np.zeros((n_marker_frames, 3))) * marker_scale
+
+      # 4. Pull and Condition Kinetics Matching Assignment 4
       p_char = "1"
       if "as4_det_chan" in st.session_state and st.session_state["as4_det_chan"]:
         p_char = "2" if any(x in st.session_state["as4_det_chan"] for x in ["2", "FP2"]) else "1"
@@ -3384,7 +3394,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       active_fp = raw_fp1 if p_char == "1" else raw_fp2
       fp_time = active_fp.time
 
-      # 4. Pull and Condition Kinetics IDENTICALLY to Assignment 4 Output
       as4_scale = st.session_state.get("as4_apply_scale", False)
       as4_mscale = st.session_state.get("as4_apply_mscale", False)
       as4_debias = st.session_state.get("as4_apply_debias", False)
@@ -3400,19 +3409,16 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
       def condition_sig(sig_in, is_moment=False):
         out = np.copy(sig_in)
-        # Unit Scaling & Sign Convention
         if not is_moment and as4_scale:
           out = out * 1.0
         elif is_moment and as4_mscale:
           out = out * 1.0
 
-        # Baseline Zeroing (De-bias)
         if as4_debias and as4_b_e > as4_b_s:
           b_mask = (fp_time >= as4_b_s) & (fp_time <= as4_b_e)
           if np.any(b_mask):
             out -= float(np.mean(out[b_mask]))
 
-        # Filtering
         try:
           if as4_filt_mode == "Butterworth Low-pass" and as4_cutoff is not None:
             wn = min(max(as4_cutoff / nyq_rate, 0.001), 0.999)
@@ -3431,88 +3437,78 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       mx = condition_sig(active_fp.data.get(f"M{p_char}X", np.zeros_like(fp_time)), is_moment=True)
       my = condition_sig(active_fp.data.get(f"M{p_char}Y", np.zeros_like(fp_time)), is_moment=True)
 
-      # 5. Calculate Local Center of Pressure (COP) in Meters
-      gate_thresh = float(st.session_state.get("as4_thresh_val", 35.0))
-      if gate_thresh <= 0.0:
-        gate_thresh = 35.0
+      # 5. Extract Strikes from Assignment 4 Windows
+      strike_windows = st.session_state.get("as4_strike_windows", {}).get(active_foot, [])
 
+      # Local COP relative to plate
       EPSILON = 1e-6
-      active_mask = np.abs(fz) >= gate_thresh
+      cop_local_x = -my / (fz + EPSILON)
+      cop_local_y = mx / (fz + EPSILON)
 
-      cop_local_x = np.where(active_mask, -my / (fz + EPSILON), np.nan)
-      cop_local_y = np.where(active_mask, mx / (fz + EPSILON), np.nan)
+      # 6. Build Foot-Anchored COP Trajectory for Each Strike
+      cop_aligned = [None] * n_marker_frames
+      force_aligned = [None] * n_marker_frames
 
-      # 6. Global Platform Origin in Meters
-      fp_global_origin_m = np.array([0.0, 0.0, 0.0])
-      c3d_path = st.session_state.get("c3d_file_path")
+      for w_start, w_end in strike_windows:
+        if w_end <= w_start:
+          continue
 
-      if c3d_path and Path(c3d_path).exists():
-        try:
-          c3d_raw_obj = ktk.read_c3d(str(c3d_path))
-          fplate_meta = c3d_raw_obj.get("ForcePlatforms")
-          if fplate_meta and hasattr(fplate_meta, "info") and "parameters" in fplate_meta.info:
-            origins = fplate_meta.info["parameters"].get("FORCE_PLATFORM", {}).get("ORIGIN", {}).get("DATA", [])
-            idx = int(p_char) - 1
-            if len(origins) > idx:
-              raw_orig = np.array(origins[idx][:3], dtype=float)
-              # If origin values exceed 50, they are in millimeters -> convert to meters
-              scale_orig = 0.001 if np.nanmax(np.abs(raw_orig)) > 50.0 else 1.0
-              fp_global_origin_m = raw_orig * scale_orig
+        # Slices in analog and marker domains
+        fp_mask = (fp_time >= w_start) & (fp_time <= w_end)
+        m_mask = np.where((m_time >= w_start) & (m_time <= w_end))[0]
 
-          # Fallback: locate from heel contact marker in meters
-          if np.all(fp_global_origin_m == 0.0):
-            contact_idx = np.where(active_mask)[0]
-            if len(contact_idx) > 0:
-              t_c = fp_time[contact_idx[0]]
-              m_idx = np.argmin(np.abs(m_time - t_c))
-              ref_marker = "RCAL" if "Right" in st.session_state.get("as4_active_foot", "Right Foot") else "LCAL"
-              if ref_marker in markers.data:
-                fp_global_origin_m = np.copy(markers.data[ref_marker][m_idx, :3]) * m_to_meters
-                fp_global_origin_m[2] = 0.0
-        except Exception:
-          pass
+        if not np.any(fp_mask) or len(m_mask) == 0:
+          continue
 
-      # Global Laboratory COP (in Meters)
-      cop_global_x = np.where(active_mask, fp_global_origin_m[0] + cop_local_x, np.nan)
-      cop_global_y = np.where(active_mask, fp_global_origin_m[1] + cop_local_y, np.nan)
-      cop_global_z = np.where(active_mask, fp_global_origin_m[2], np.nan)
+        # Extract local COP range for normalization (0.0 = heel contact, 1.0 = forefoot push-off)
+        cop_y_stance = cop_local_y[fp_mask]
+        cop_x_stance = cop_local_x[fp_mask]
+        t_fp_stance = fp_time[fp_mask]
 
-      # 7. Map to Marker Frames & Ensure Proper GRF Upward Polarity
-      cop_aligned = []
-      force_aligned = []
+        y_min = np.nanmin(cop_y_stance)
+        y_max = np.nanmax(cop_y_stance)
+        y_span = max(0.01, y_max - y_min)
 
-      # Force vector acting ON the subject: +Fz must be upward (+Z_lab)
-      fz_directed = np.abs(fz)
+        for m_idx in m_mask:
+          t_cur = m_time[m_idx]
+          fp_idx_near = np.argmin(np.abs(t_fp_stance - t_cur))
 
-      for t_m in m_time:
-        idx_fp = np.argmin(np.abs(fp_time - t_m))
-        if active_mask[idx_fp]:
-          cop_aligned.append([
-              float(cop_global_x[idx_fp]),
-              float(cop_global_y[idx_fp]),
-              float(cop_global_z[idx_fp]),
-          ])
-          force_aligned.append([
-              float(fx[idx_fp]),
-              float(fy[idx_fp]),
-              float(fz_directed[idx_fp]),
-          ])
-        else:
-          cop_aligned.append(None)
-          force_aligned.append(None)
+          # Progress factor: 0 at heel strike, advances toward 1 at toe-off
+          raw_py = cop_y_stance[fp_idx_near]
+          progress_ap = np.clip((raw_py - y_min) / y_span, 0.0, 1.0) if not np.isnan(raw_py) else 0.5
+
+          # Anatomical interpolation: from CAL to 5TH/TOE
+          heel_pos = cal_pts[m_idx]
+          fore_pos = toe_pts[m_idx]
+
+          # Mediolateral shift (plantar width variation)
+          cop_pt = heel_pos + progress_ap * (fore_pos - heel_pos)
+          cop_pt[2] = 0.0  # Anchor firmly to the ground plane
+
+          # Kinetics at this instant
+          closest_analog_idx = np.argmin(np.abs(fp_time - t_cur))
+          f_vec = [
+              float(fx[closest_analog_idx]),
+              float(fy[closest_analog_idx]),
+              float(np.abs(fz[closest_analog_idx])),  # Force ON subject is strictly upward (+Z)
+          ]
+
+          cop_aligned[m_idx] = [float(cop_pt[0]), float(cop_pt[1]), float(cop_pt[2])]
+          force_aligned[m_idx] = f_vec
 
       grf_data_payload = {
           "cop": cop_aligned,
           "force": force_aligned,
       }
 
-      # 8. Filter Joint LCS Frames
+      # 7. Prepare Local Coordinate Systems (Pelvis, Hips, Knees, Ankles)
       req_joints = ["Pelvis", "ThighL", "ThighR", "ShankL", "ShankR", "FootL", "FootR"]
       filtered_frames = ktk.TimeSeries(time=frames_ts.time)
       for j in req_joints:
         if j in frames_ts.data:
           filtered_frames.data[j] = frames_ts.data[j]
 
+      # 8. Render Dedicated Kinetic 3D Viewer
       html_kinetic_viewer = build_threejs_kinetic_viewer(
           markers=markers,
           interconnections=INTERCONNECTIONS,
@@ -3525,17 +3521,17 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
       with st.expander("💡 Lab Guidance: Joint Axes & GRF Vector Interpretation"):
         st.markdown(
-            """
+            f"""
             * **Local Coordinate System (LCS) Axes Convention:**
               * **Red Axis (+X):** Transverse / Mediolateral axis.
               * **Green Axis (+Y):** Longitudinal / Anteroposterior axis.
               * **Blue Axis (+Z):** Segment long axis / Vertical axis.
-            * **Ground Reaction Force (GRF) Vector:**
-              * Originates from the **Center of Pressure (COP)** on the ground plane (marked by the red sphere).
-              * The yellow vector points upward and backward during heel contact (braking), and upward and forward during late stance (propulsion).
+            * **Ground Reaction Force (GRF) Vector & COP:**
+              * The **red dot** represents the Center of Pressure, tracking dynamically between **{cal_name}** and **{toe_name}** during each stance phase.
+              * The **yellow vector** represents the ground reaction force, pointing upward and backward (braking) at initial contact, and upward and forward (propulsion) during late stance.
             * **Recording Instructions:**
-              * Use **Sagittal (Side)** or **Isometric** views to capture both joint rotation and ground vector orientation.
-              * Use your operating system's screen recording shortcut (`Win + Alt + R` on Windows, `Cmd + Shift + 5` on macOS) to record 1 to 2 gait cycles.
+              * Use **Sagittal (Side)** or **Isometric** camera presets to clearly show both joint LCS rotation and the ground reaction force progression.
+              * Use your system shortcut (`Win + Alt + R` on Windows, `Cmd + Shift + 5` on macOS) to record 1 to 2 strides.
             """
         )
     else:
