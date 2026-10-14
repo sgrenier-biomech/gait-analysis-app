@@ -2661,24 +2661,94 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     st.markdown("---")
     
-    # -------------------------------------------------------------------------
-    # PART 4: KINETIC & COP DELIVERABLES (SYNCHRONIZED WITH PART 2 FOOT)
+# -------------------------------------------------------------------------
+    # PART 4: KINETIC & COP DELIVERABLES (DIRECTLY INHERITED FROM PART 1 & 2)
     # -------------------------------------------------------------------------
     st.markdown("### Part 4: Kinetic & COP Deliverables")
 
+    # Determine force platform directly from Part 1 selection
+    if detection_channel and any(x in detection_channel for x in ["Plate 2", "FP2", "F2", "M2"]):
+      inferred_plate = "FP2"
+    elif detection_channel and any(x in detection_channel for x in ["Plate 1", "FP1", "F1", "M1"]):
+      inferred_plate = "FP1"
+    elif fp1_foot_contact is not None:
+      inferred_plate = "FP1" if as4_active_foot == fp1_foot_contact else "FP2"
+    else:
+      inferred_plate = "FP1"
+
+    p_char = "2" if inferred_plate == "FP2" else "1"
+    selected_fp = raw_fp2 if p_char == "2" else raw_fp1
+    fp_time = selected_fp.time
+
+    fz_gate_threshold = float(thresh_val) if thresh_val > 0.0 else 25.0
+    active_filt_label = as4_filter_mode if detection_channel is not None else "None (Raw)"
+
+    st.caption(
+        f"Active Platform: **{inferred_plate}** | Foot: **{as4_active_foot}** | "
+        f"Conditioning: **{active_filt_label}** | "
+        f"Debiasing: **{'Active' if as4_apply_debias else 'Off'}** | "
+        f"Vertical Gate: **|Fz| ≥ {fz_gate_threshold:.1f} N**"
+    )
+
+    # Condition all 6 force/moment channels using Part 1 settings
+    def condition_channel(sig_arr, is_moment=False):
+      out = np.copy(sig_arr)
+
+      if not is_moment and as4_apply_scale:
+        out = out * 1.0
+      elif is_moment and as4_apply_mscale:
+        out = out * 1.0
+
+      if as4_apply_debias and as4_b_end > as4_b_start:
+        b_mask = (fp_time >= as4_b_start) & (fp_time <= as4_b_end)
+        if np.any(b_mask):
+          offset_val = float(np.mean(out[b_mask]))
+          out -= offset_val
+
+      dt_samp = float(np.mean(np.diff(fp_time))) if len(fp_time) > 1 else 0.001
+      fs_rate_ch = 1.0 / dt_samp if dt_samp > 0 else 1000.0
+      nyq_rate_ch = 0.5 * fs_rate_ch
+
+      try:
+        if active_filt_label == "Butterworth Low-pass" and as4_fc is not None:
+          wn = min(max(as4_fc / nyq_rate_ch, 0.001), 0.999)
+          sos = signal.butter(4, wn, btype="low", output="sos")
+          out = signal.sosfiltfilt(sos, out)
+        elif active_filt_label == "Butterworth High-pass" and as4_fc is not None:
+          wn = min(max(as4_fc / nyq_rate_ch, 0.001), 0.999)
+          sos = signal.butter(4, wn, btype="high", output="sos")
+          out = signal.sosfiltfilt(sos, out)
+        elif active_filt_label == "Moving Average Smoothing" and as4_smooth_window is not None:
+          w_len = max(3, int(as4_smooth_window))
+          out = np.convolve(out, np.ones(w_len) / w_len, mode="same")
+      except Exception:
+        pass
+
+      return out
+
+    fx_raw = condition_channel(selected_fp.data.get(f"F{p_char}X", np.zeros_like(fp_time)), is_moment=False)
+    fy_raw = condition_channel(selected_fp.data.get(f"F{p_char}Y", np.zeros_like(fp_time)), is_moment=False)
+    fz_raw = condition_channel(selected_fp.data.get(f"F{p_char}Z", np.zeros_like(fp_time)), is_moment=False)
+    mx_raw = condition_channel(selected_fp.data.get(f"M{p_char}X", np.zeros_like(fp_time)), is_moment=True)
+    my_raw = condition_channel(selected_fp.data.get(f"M{p_char}Y", np.zeros_like(fp_time)), is_moment=True)
+    mz_raw = condition_channel(selected_fp.data.get(f"M{p_char}Z", np.zeros_like(fp_time)), is_moment=True)
+
+    # Strike dropdown matching the 3rd set of 5 (Strikes 11 to 15)
+    strike_options = [11, 12, 13, 14, 15]
     inspect_strike_choice = st.selectbox(
-        f"Select Strike Number to Inspect ({as4_active_foot}):",
-        options=list(range(1, 6)),
+        f"Select Strike to Inspect ({as4_active_foot}):",
+        options=strike_options,
         format_func=lambda x: f"Strike {x}",
         index=0,
         key="as4_inspect_strike_idx",
     )
 
-    inspect_strike_idx = inspect_strike_choice - 1
+    # Map global strike 11..15 to list index 0..4
+    inspect_strike_idx = inspect_strike_choice - 11
     cur_s, cur_e = st.session_state["as4_strike_windows"][as4_active_foot][inspect_strike_idx]
-    
+
     st.info(
-        f"Displaying **{as4_active_foot} — Strike {inspect_strike_idx + 1}** "
+        f"Displaying **{as4_active_foot} — Strike {inspect_strike_choice}** "
         f"(Interval: **{cur_s:.3f}s** to **{cur_e:.3f}s** | Duration: **{max(0.0, cur_e - cur_s):.3f}s**)"
     )
 
@@ -2695,9 +2765,9 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     my_sub = my_raw[mask_cur]
     mz_sub = mz_raw[mask_cur]
 
-    # --- 6-Component Subplots ---
-    st.markdown(f"#### 1. Six-Component Kinetics ({as4_active_foot}: Strike {inspect_strike_idx + 1})")
-    
+    # --- 1. Six-Component Kinetics Plot ---
+    st.markdown(f"#### 1. Six-Component Kinetics ({as4_active_foot}: Strike {inspect_strike_choice})")
+
     from plotly.subplots import make_subplots
     fig_6comp = make_subplots(
         rows=2,
@@ -2740,7 +2810,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
     st.plotly_chart(fig_6comp, use_container_width=True)
 
-    # --- Compute COP ---
+    # --- 2. COP Calculations & Plots ---
     EPSILON = 1e-6
     gate_mask = np.abs(fz_sub) >= fz_gate_threshold
 
@@ -2748,7 +2818,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     cop_y_sub = np.where(gate_mask, mx_sub / (fz_sub + EPSILON), np.nan)
 
     st.markdown("#### 2. Centre of Pressure Trajectories")
-    
+
     col_p1, col_p2 = st.columns(2)
     with col_p1:
       fig_cop_ts = go.Figure()
@@ -2759,7 +2829,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           go.Scatter(x=t_sub, y=cop_y_sub, mode="lines", name="COPy (A-P)", line=dict(color="#f43f5e", width=2))
       )
       fig_cop_ts.update_layout(
-          title=f"COP Coordinates vs. Time ({as4_active_foot}: Strike {inspect_strike_idx + 1})",
+          title=f"COP Coordinates vs. Time ({as4_active_foot}: Strike {inspect_strike_choice})",
           xaxis_title="Time (s)",
           yaxis_title="Displacement (m)",
           template="plotly_dark",
@@ -2814,7 +2884,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         )
 
       fig_planar.update_layout(
-          title=f"Planar Path: COPx vs. COPy ({as4_active_foot}: Strike {inspect_strike_idx + 1})",
+          title=f"Planar Path: COPx vs. COPy ({as4_active_foot}: Strike {inspect_strike_choice})",
           xaxis_title="Medio-Lateral Position COPx (m)",
           yaxis_title="Antero-Posterior Position COPy (m)",
           template="plotly_dark",
@@ -2824,11 +2894,9 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       )
       st.plotly_chart(fig_planar, use_container_width=True)
 
-    # -------------------------------------------------------------------------
-    # PART 5: MULTI-STRIKE COMPARISON (OVERLAY ALL 5 STRIKES)
-    # -------------------------------------------------------------------------
-    st.markdown(f"#### 3. Planar Comparison Across All 5 Strikes ({as4_active_foot})")
-    
+    # --- 3. Overlay of All 5 Selected Strikes (11 to 15) ---
+    st.markdown(f"#### 3. Planar Comparison Across Strikes 11–15 ({as4_active_foot})")
+
     fig_multi = go.Figure()
     strike_colors = ["#38bdf8", "#818cf8", "#c084fc", "#f472b6", "#fb7185"]
 
@@ -2839,7 +2907,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         fz_i = fz_raw[m_i]
         mx_i = mx_raw[m_i]
         my_i = my_raw[m_i]
-        t_i = fp_time[m_i]
 
         gate_i = np.abs(fz_i) >= fz_gate_threshold
         cx_i = np.where(gate_i, -my_i / (fz_i + EPSILON), np.nan)
@@ -2853,12 +2920,12 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
                   y=cy_i[valid_i],
                   mode="lines",
                   line=dict(color=strike_colors[s_i], width=2),
-                  name=f"Strike {s_i + 1}",
+                  name=f"Strike {11 + s_i}",
               )
           )
 
     fig_multi.update_layout(
-        title=f"Overlay of All 5 Planar COP Trajectories ({as4_active_foot})",
+        title=f"Overlay of Strikes 11–15 Planar COP Trajectories ({as4_active_foot})",
         xaxis_title="Medio-Lateral COPx (m)",
         yaxis_title="Antero-Posterior COPy (m)",
         template="plotly_dark",
@@ -2869,7 +2936,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.plotly_chart(fig_multi, use_container_width=True)
 
     # -------------------------------------------------------------------------
-    # PART 6: THEORY & LAB REPORT QUESTIONS
+    # PART 5: THEORY & LAB REPORT QUESTIONS
     # -------------------------------------------------------------------------
     with st.expander("💡 Lab Report Prompts & Theory Reference"):
       st.markdown(
