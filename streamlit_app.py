@@ -3375,21 +3375,80 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       stacked_pts = np.concatenate([m[::5, :3] for m in markers.data.values()], axis=0)
       marker_scale = 0.001 if float(np.nanmax(np.abs(stacked_pts))) > 50.0 else 1.0
 
-      # 3. Identify Foot Markers for Foot Placement (Heel and 5th Metatarsal/Toe)
-      active_foot = st.session_state.get("as4_active_foot", "Right Foot")
-      is_right = "Right" in active_foot
+      # 3. Identify Active Foot & Validate with Kinematics
+      selected_foot_pref = st.session_state.get(
+          "as4_active_foot_radio",
+          st.session_state.get("as4_active_foot", "Right Foot"),
+      )
+
+      # Extract candidate foot markers
+      rcal_pts = (
+          markers.data.get("RCAL", np.zeros((n_marker_frames, 3)))
+          * marker_scale
+      )
+      lcal_pts = (
+          markers.data.get("LCAL", np.zeros((n_marker_frames, 3)))
+          * marker_scale
+      )
+      rtoe_pts = (
+          markers.data.get(
+              "R5TH" if "R5TH" in markers.data else "RTOE",
+              np.zeros((n_marker_frames, 3)),
+          )
+          * marker_scale
+      )
+      ltoe_pts = (
+          markers.data.get(
+              "L5TH" if "L5TH" in markers.data else "LTOE",
+              np.zeros((n_marker_frames, 3)),
+          )
+          * marker_scale
+      )
+
+      # Check strike windows from Assignment 4
+      strike_windows = st.session_state.get("as4_strike_windows", {}).get(
+          selected_foot_pref, []
+      )
+      if not strike_windows:
+        alt_foot = "Left Foot" if "Right" in selected_foot_pref else "Right Foot"
+        if st.session_state.get("as4_strike_windows", {}).get(alt_foot):
+          selected_foot_pref = alt_foot
+          strike_windows = st.session_state["as4_strike_windows"][alt_foot]
+
+      # Measure heel Z height during first contact window to verify contact limb
+      is_right = "Right" in selected_foot_pref
+      if strike_windows and len(strike_windows) > 0:
+        first_w = strike_windows[0]
+        w_mask = np.where((m_time >= first_w[0]) & (m_time <= first_w[1]))[0]
+        if len(w_mask) > 0:
+          r_height = np.nanmean(rcal_pts[w_mask, 2])
+          l_height = np.nanmean(lcal_pts[w_mask, 2])
+          if not np.isnan(r_height) and not np.isnan(l_height):
+            if abs(r_height - l_height) > 0.03:
+              is_right = r_height < l_height
+
+      # Define active_foot explicitly so it is available everywhere downstream
+      active_foot = "Right Foot" if is_right else "Left Foot"
 
       cal_name = "RCAL" if is_right else "LCAL"
-      # Try 5th metatarsal first, fallback to TOE if 5TH not present
-      toe_name = ("R5TH" if "R5TH" in markers.data else "RTOE") if is_right else ("L5TH" if "L5TH" in markers.data else "LTOE")
-
-      cal_pts = markers.data.get(cal_name, np.zeros((n_marker_frames, 3))) * marker_scale
-      toe_pts = markers.data.get(toe_name, np.zeros((n_marker_frames, 3))) * marker_scale
+      toe_name = (
+          ("R5TH" if "R5TH" in markers.data else "RTOE")
+          if is_right
+          else ("L5TH" if "L5TH" in markers.data else "LTOE")
+      )
+      cal_pts = rcal_pts if is_right else lcal_pts
+      toe_pts = rtoe_pts if is_right else ltoe_pts
 
       # 4. Pull and Condition Kinetics Matching Assignment 4
       p_char = "1"
       if "as4_det_chan" in st.session_state and st.session_state["as4_det_chan"]:
-        p_char = "2" if any(x in st.session_state["as4_det_chan"] for x in ["2", "FP2"]) else "1"
+        p_char = (
+            "2"
+            if any(
+                x in st.session_state["as4_det_chan"] for x in ["2", "FP2"]
+            )
+            else "1"
+        )
 
       active_fp = raw_fp1 if p_char == "1" else raw_fp2
       fp_time = active_fp.time
@@ -3403,7 +3462,9 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       as4_cutoff = st.session_state.get("as4_fc_lp", 20)
       as4_smooth = st.session_state.get("as4_smooth_win", 15)
 
-      dt_samp = float(np.mean(np.diff(fp_time))) if len(fp_time) > 1 else 0.001
+      dt_samp = (
+          float(np.mean(np.diff(fp_time))) if len(fp_time) > 1 else 0.001
+      )
       fs_rate = 1.0 / dt_samp if dt_samp > 0 else 1000.0
       nyq_rate = 0.5 * fs_rate
 
@@ -3424,23 +3485,43 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             wn = min(max(as4_cutoff / nyq_rate, 0.001), 0.999)
             sos = signal.butter(4, wn, btype="low", output="sos")
             out = signal.sosfiltfilt(sos, out)
-          elif as4_filt_mode == "Moving Average Smoothing" and as4_smooth is not None:
+          elif (
+              as4_filt_mode == "Moving Average Smoothing"
+              and as4_smooth is not None
+          ):
             w_len = max(3, int(as4_smooth))
             out = np.convolve(out, np.ones(w_len) / w_len, mode="same")
         except Exception:
           pass
         return out
 
-      fx = condition_sig(active_fp.data.get(f"F{p_char}X", np.zeros_like(fp_time)), is_moment=False)
-      fy = condition_sig(active_fp.data.get(f"F{p_char}Y", np.zeros_like(fp_time)), is_moment=False)
-      fz = condition_sig(active_fp.data.get(f"F{p_char}Z", np.zeros_like(fp_time)), is_moment=False)
-      mx = condition_sig(active_fp.data.get(f"M{p_char}X", np.zeros_like(fp_time)), is_moment=True)
-      my = condition_sig(active_fp.data.get(f"M{p_char}Y", np.zeros_like(fp_time)), is_moment=True)
+      fx = condition_sig(
+          active_fp.data.get(f"F{p_char}X", np.zeros_like(fp_time)),
+          is_moment=False,
+      )
+      fy = condition_sig(
+          active_fp.data.get(f"F{p_char}Y", np.zeros_like(fp_time)),
+          is_moment=False,
+      )
+      fz = condition_sig(
+          active_fp.data.get(f"F{p_char}Z", np.zeros_like(fp_time)),
+          is_moment=False,
+      )
+      mx = condition_sig(
+          active_fp.data.get(f"M{p_char}X", np.zeros_like(fp_time)),
+          is_moment=True,
+      )
+      my = condition_sig(
+          active_fp.data.get(f"M{p_char}Y", np.zeros_like(fp_time)),
+          is_moment=True,
+      )
 
       # 5. Extract Strikes from Assignment 4 Windows
-      strike_windows = st.session_state.get("as4_strike_windows", {}).get(active_foot, [])
+      if not strike_windows:
+        strike_windows = st.session_state.get("as4_strike_windows", {}).get(
+            active_foot, []
+        )
 
-      # Local COP relative to plate
       EPSILON = 1e-6
       cop_local_x = -my / (fz + EPSILON)
       cop_local_y = mx / (fz + EPSILON)
