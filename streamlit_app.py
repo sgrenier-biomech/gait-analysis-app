@@ -2593,7 +2593,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       inferred_plate = "FP1"
 
     p_char = "2" if inferred_plate == "FP2" else "1"
-    selected_fp = raw_fp2 if p_char == "2" else raw_fp1[cite: 3]
+    selected_fp = raw_fp2 if p_char == "2" else raw_fp1
     fp_time = selected_fp.time
 
     # Inherit threshold and filter settings from Part 1
