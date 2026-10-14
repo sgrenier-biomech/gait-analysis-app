@@ -501,17 +501,19 @@ def build_threejs_kinetic_viewer(
   if grf_data is not None:
     grf_payload = {
         "cop": [
-            [round(c[0] * scale, 4), round(c[2] * scale, 4), round(-c[1] * scale, 4)]
-            if c is not None and not np.isnan(c).any() else None
+            # c is [x_meters, y_meters, z_meters] -> Three.js [x, z_up, -y]
+            [round(c[0], 4), round(c[2], 4), round(-c[1], 4)]
+            if c is not None else None
             for c in grf_data["cop"][::step]
         ],
         "force": [
+            # GRF pushing up (+Fz) and forward (+Fy) -> Three.js [Fx, Fz, -Fy]
             [round(f[0], 2), round(f[2], 2), round(-f[1], 2)]
-            if f is not None and not np.isnan(f).any() else None
+            if f is not None else None
             for f in grf_data["force"][::step]
         ],
     }
-
+    
   data_payload = json.dumps({
       "times": times,
       "n_frames": n_frames,
@@ -3356,7 +3358,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         ### Submission Deliverables:
         1. **Screen Grab Video:** Record a video of your C3D trial playing in the 3D player below with:
            * **Local Coordinate Systems (LCS)** displayed at the Pelvis, Left/Right Hips, Knees, and Ankles (Red = X, Green = Y, Blue = Z).
-           * **Ground Reaction Force (GRF) Vector** (yellow arrow) dynamically anchored at the Center of Pressure (red sphere) tracking beneath the foot during contact.
+           * **Ground Reaction Force (GRF) Vector** (yellow arrow) dynamically anchored at the Center of Pressure (red sphere) tracking the foot strike trajectory.
         2. **Assigned Filename:** Submit the verified filename (`{assigned_file_name}`) with your report.
         """
     )
@@ -3369,7 +3371,12 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     if markers is not None and hasattr(markers, "data") and frames_ts is not None:
       m_time = markers.time
 
-      # 2. Determine target platform based on Assignment 4 settings
+      # 2. Determine Scale Factor (Meters vs Millimeters)
+      stacked_pts = np.concatenate([m[::5, :3] for m in markers.data.values()], axis=0)
+      marker_is_mm = float(np.nanmax(np.abs(stacked_pts))) > 50.0
+      m_to_meters = 0.001 if marker_is_mm else 1.0
+
+      # 3. Determine target platform based on Assignment 4 selections
       p_char = "1"
       if "as4_det_chan" in st.session_state and st.session_state["as4_det_chan"]:
         p_char = "2" if any(x in st.session_state["as4_det_chan"] for x in ["2", "FP2"]) else "1"
@@ -3377,41 +3384,54 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       active_fp = raw_fp1 if p_char == "1" else raw_fp2
       fp_time = active_fp.time
 
-      # 3. Determine Force Platform Global Laboratory Origin
-      fp_global_origin = np.array([0.0, 0.0, 0.0])
-      c3d_path = st.session_state.get("c3d_file_path")
+      # 4. Pull and Condition Kinetics IDENTICALLY to Assignment 4 Output
+      as4_scale = st.session_state.get("as4_apply_scale", False)
+      as4_mscale = st.session_state.get("as4_apply_mscale", False)
+      as4_debias = st.session_state.get("as4_apply_debias", False)
+      as4_b_s = float(st.session_state.get("as4_b_start", fp_time[0] + 0.1))
+      as4_b_e = float(st.session_state.get("as4_b_end", fp_time[0] + 0.4))
+      as4_filt_mode = st.session_state.get("as4_filter_mode", "None (Raw)")
+      as4_cutoff = st.session_state.get("as4_fc_lp", 20)
+      as4_smooth = st.session_state.get("as4_smooth_win", 15)
 
-      if c3d_path and Path(c3d_path).exists():
+      dt_samp = float(np.mean(np.diff(fp_time))) if len(fp_time) > 1 else 0.001
+      fs_rate = 1.0 / dt_samp if dt_samp > 0 else 1000.0
+      nyq_rate = 0.5 * fs_rate
+
+      def condition_sig(sig_in, is_moment=False):
+        out = np.copy(sig_in)
+        # Unit Scaling & Sign Convention
+        if not is_moment and as4_scale:
+          out = out * 1.0
+        elif is_moment and as4_mscale:
+          out = out * 1.0
+
+        # Baseline Zeroing (De-bias)
+        if as4_debias and as4_b_e > as4_b_s:
+          b_mask = (fp_time >= as4_b_s) & (fp_time <= as4_b_e)
+          if np.any(b_mask):
+            out -= float(np.mean(out[b_mask]))
+
+        # Filtering
         try:
-          c3d_raw_obj = ktk.read_c3d(str(c3d_path))
-          fplate_meta = c3d_raw_obj.get("ForcePlatforms")
-          if fplate_meta and hasattr(fplate_meta, "info") and "parameters" in fplate_meta.info:
-            origins = fplate_meta.info["parameters"].get("FORCE_PLATFORM", {}).get("ORIGIN", {}).get("DATA", [])
-            idx = int(p_char) - 1
-            if len(origins) > idx:
-              fp_global_origin = np.array(origins[idx][:3], dtype=float)
-
-          # Fallback: Locate plate coordinates from anatomical foot contact landmark
-          if np.all(fp_global_origin == 0.0):
-            fz_trace = np.abs(active_fp.data.get(f"F{p_char}Z", np.zeros_like(fp_time)))
-            contact_idx = np.where(fz_trace > 80.0)[0]
-            if len(contact_idx) > 0:
-              t_contact = fp_time[contact_idx[0]]
-              m_idx = np.argmin(np.abs(m_time - t_contact))
-              ref_marker = "RCAL" if "Right" in st.session_state.get("as4_active_foot", "Right Foot") else "LCAL"
-              if ref_marker in markers.data:
-                fp_global_origin = np.copy(markers.data[ref_marker][m_idx, :3])
-                fp_global_origin[2] = 0.0  # Project to ground plane
+          if as4_filt_mode == "Butterworth Low-pass" and as4_cutoff is not None:
+            wn = min(max(as4_cutoff / nyq_rate, 0.001), 0.999)
+            sos = signal.butter(4, wn, btype="low", output="sos")
+            out = signal.sosfiltfilt(sos, out)
+          elif as4_filt_mode == "Moving Average Smoothing" and as4_smooth is not None:
+            w_len = max(3, int(as4_smooth))
+            out = np.convolve(out, np.ones(w_len) / w_len, mode="same")
         except Exception:
           pass
+        return out
 
-      # 4. Extract Kinetics & Compute Global Centre of Pressure
-      fx = active_fp.data.get(f"F{p_char}X", np.zeros_like(fp_time))
-      fy = active_fp.data.get(f"F{p_char}Y", np.zeros_like(fp_time))
-      fz = active_fp.data.get(f"F{p_char}Z", np.zeros_like(fp_time))
-      mx = active_fp.data.get(f"M{p_char}X", np.zeros_like(fp_time))
-      my = active_fp.data.get(f"M{p_char}Y", np.zeros_like(fp_time))
+      fx = condition_sig(active_fp.data.get(f"F{p_char}X", np.zeros_like(fp_time)), is_moment=False)
+      fy = condition_sig(active_fp.data.get(f"F{p_char}Y", np.zeros_like(fp_time)), is_moment=False)
+      fz = condition_sig(active_fp.data.get(f"F{p_char}Z", np.zeros_like(fp_time)), is_moment=False)
+      mx = condition_sig(active_fp.data.get(f"M{p_char}X", np.zeros_like(fp_time)), is_moment=True)
+      my = condition_sig(active_fp.data.get(f"M{p_char}Y", np.zeros_like(fp_time)), is_moment=True)
 
+      # 5. Calculate Local Center of Pressure (COP) in Meters
       gate_thresh = float(st.session_state.get("as4_thresh_val", 35.0))
       if gate_thresh <= 0.0:
         gate_thresh = 35.0
@@ -3422,13 +3442,47 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       cop_local_x = np.where(active_mask, -my / (fz + EPSILON), np.nan)
       cop_local_y = np.where(active_mask, mx / (fz + EPSILON), np.nan)
 
-      cop_global_x = np.where(active_mask, fp_global_origin[0] + cop_local_x, np.nan)
-      cop_global_y = np.where(active_mask, fp_global_origin[1] + cop_local_y, np.nan)
-      cop_global_z = np.where(active_mask, fp_global_origin[2], np.nan)
+      # 6. Global Platform Origin in Meters
+      fp_global_origin_m = np.array([0.0, 0.0, 0.0])
+      c3d_path = st.session_state.get("c3d_file_path")
 
-      # 5. Map Kinetics Synchronously onto Marker Frames
+      if c3d_path and Path(c3d_path).exists():
+        try:
+          c3d_raw_obj = ktk.read_c3d(str(c3d_path))
+          fplate_meta = c3d_raw_obj.get("ForcePlatforms")
+          if fplate_meta and hasattr(fplate_meta, "info") and "parameters" in fplate_meta.info:
+            origins = fplate_meta.info["parameters"].get("FORCE_PLATFORM", {}).get("ORIGIN", {}).get("DATA", [])
+            idx = int(p_char) - 1
+            if len(origins) > idx:
+              raw_orig = np.array(origins[idx][:3], dtype=float)
+              # If origin values exceed 50, they are in millimeters -> convert to meters
+              scale_orig = 0.001 if np.nanmax(np.abs(raw_orig)) > 50.0 else 1.0
+              fp_global_origin_m = raw_orig * scale_orig
+
+          # Fallback: locate from heel contact marker in meters
+          if np.all(fp_global_origin_m == 0.0):
+            contact_idx = np.where(active_mask)[0]
+            if len(contact_idx) > 0:
+              t_c = fp_time[contact_idx[0]]
+              m_idx = np.argmin(np.abs(m_time - t_c))
+              ref_marker = "RCAL" if "Right" in st.session_state.get("as4_active_foot", "Right Foot") else "LCAL"
+              if ref_marker in markers.data:
+                fp_global_origin_m = np.copy(markers.data[ref_marker][m_idx, :3]) * m_to_meters
+                fp_global_origin_m[2] = 0.0
+        except Exception:
+          pass
+
+      # Global Laboratory COP (in Meters)
+      cop_global_x = np.where(active_mask, fp_global_origin_m[0] + cop_local_x, np.nan)
+      cop_global_y = np.where(active_mask, fp_global_origin_m[1] + cop_local_y, np.nan)
+      cop_global_z = np.where(active_mask, fp_global_origin_m[2], np.nan)
+
+      # 7. Map to Marker Frames & Ensure Proper GRF Upward Polarity
       cop_aligned = []
       force_aligned = []
+
+      # Force vector acting ON the subject: +Fz must be upward (+Z_lab)
+      fz_directed = np.abs(fz)
 
       for t_m in m_time:
         idx_fp = np.argmin(np.abs(fp_time - t_m))
@@ -3441,7 +3495,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           force_aligned.append([
               float(fx[idx_fp]),
               float(fy[idx_fp]),
-              float(fz[idx_fp]),
+              float(fz_directed[idx_fp]),
           ])
         else:
           cop_aligned.append(None)
@@ -3452,14 +3506,13 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           "force": force_aligned,
       }
 
-      # 6. Filter Joint Transform Frames to Target Anatomical Segments
+      # 8. Filter Joint LCS Frames
       req_joints = ["Pelvis", "ThighL", "ThighR", "ShankL", "ShankR", "FootL", "FootR"]
       filtered_frames = ktk.TimeSeries(time=frames_ts.time)
       for j in req_joints:
         if j in frames_ts.data:
           filtered_frames.data[j] = frames_ts.data[j]
 
-      # 7. Render Assignment 5 Dedicated WebGL Viewer
       html_kinetic_viewer = build_threejs_kinetic_viewer(
           markers=markers,
           interconnections=INTERCONNECTIONS,
