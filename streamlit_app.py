@@ -2137,6 +2137,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
               "Kinematic Marker Trajectories (Points)",
               "Sagittal Joint Angles",
           ],
+          index=None,
+          placeholder="Select a domain...",
           key="as4_modality",
           help="Choose which physical measurement stream governs event boundary detection.",
       )
@@ -2146,6 +2148,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         detection_channel = st.selectbox(
             "Primary Signal Channel:",
             ["F1Z / F2Z (Vertical)", "F1Y / F2Y (A-P Shear)", "F1X / F2X (M-L Shear)", "Resultant GRF Magnitude", "M1Z / M2Z (Free Moment)"],
+            index=None,
+            placeholder="Select a variable...",
             key="as4_det_chan",
         )
       elif event_modality == "Kinematic Marker Trajectories (Points)":
@@ -2153,15 +2157,20 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         detection_channel = st.selectbox(
             "Tracking Marker Landmark:",
             all_markers,
-            index=all_markers.index("LCAL") if "LCAL" in all_markers else 0,
+            index=None,
+            placeholder="Select a marker...",
             key="as4_det_marker",
         )
-      else:
+      elif event_modality == "Sagittal Joint Angles":
         detection_channel = st.selectbox(
             "Joint Angle Variable:",
             list(angles_ts.data.keys()),
+            index=None,
+            placeholder="Select a joint angle...",
             key="as4_det_angle",
         )
+      else:
+        st.caption("👈 Choose a signal domain first.")
 
     with c_crit3:
       detection_logic = st.selectbox(
@@ -2172,6 +2181,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
               "Percentage of Peak Amplitude",
               "Local Minimum Extrema Detection",
           ],
+          index=None,
+          placeholder="Select a decision rule...",
           key="as4_det_logic",
       )
 
@@ -2179,7 +2190,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     with c_param1:
       thresh_val = st.number_input(
           "Trigger Threshold / Cutoff Magnitude:",
-          value=20.0,
+          value=0.0,
           step=1.0,
           format="%.2f",
           key="as4_thresh_val",
@@ -2189,6 +2200,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       event_polarity = st.selectbox(
           "Contact Polarity:",
           ["Signal Exceeds Threshold (>)", "Signal Falls Below Threshold (<)"],
+          index=None,
+          placeholder="Select polarity...",
           key="as4_polarity",
       )
     with c_param3:
@@ -2199,6 +2212,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
               "Kinematic Proximity (Heel Marker Distance to Plate)",
               "Manual User Classification",
           ],
+          index=None,
+          placeholder="Select an allocation strategy...",
           key="as4_foot_assign",
       )
 
@@ -2210,7 +2225,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.markdown("### Part 2: Isolated Foot Strike Intervals (5 Left, 5 Right)")
     st.caption("Specify the exact temporal windows [Start, End] for 5 strikes of each foot based on your selected criteria.")
 
-    # Seed 10 default strike intervals if not initialized
     if "as4_strike_windows" not in st.session_state:
       st.session_state["as4_strike_windows"] = {
           "Left Foot": [
@@ -2263,18 +2277,22 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       cop_plate_src = st.selectbox(
           "Source Force Plate Signal:",
           ["FP1 (Plate 1)", "FP2 (Plate 2)"],
+          index=None,
+          placeholder="Select a force plate...",
           key="as4_cop_plate_src",
       )
     with cop_c2:
       cop_filter_choice = st.selectbox(
           "Signal Conditioning Applied:",
           ["Raw Transducer Signals", "Low-Pass Filtered (20 Hz)", "Debiased + Filtered"],
+          index=None,
+          placeholder="Select signal conditioning...",
           key="as4_cop_filt_choice",
       )
     with cop_c3:
       fz_gate_threshold = st.number_input(
           "Vertical Force Cutoff Gate |Fz| (N):",
-          value=25.0,
+          value=0.0,
           min_value=0.0,
           max_value=200.0,
           step=5.0,
@@ -2282,10 +2300,13 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           help="Samples where |Fz| is less than this value are masked with NaN to prevent division-by-zero explosions.",
       )
 
+    if cop_plate_src is None:
+      st.info("Please select a Source Force Plate above to compute and render kinetics and COP.")
+      st.stop()
+
     p_char = "1" if "FP1" in cop_plate_src else "2"
     selected_fp = raw_fp1 if p_char == "1" else raw_fp2
 
-    # Prepare working signals based on user choices
     fx_raw = selected_fp.data.get(f"F{p_char}X", np.zeros_like(selected_fp.time))
     fy_raw = selected_fp.data.get(f"F{p_char}Y", np.zeros_like(selected_fp.time))
     fz_raw = selected_fp.data.get(f"F{p_char}Z", np.zeros_like(selected_fp.time))
@@ -2302,20 +2323,28 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     v_col1, v_col2 = st.columns(2)
     with v_col1:
-      inspect_foot = st.radio(
+      inspect_foot = st.selectbox(
           "Inspect Foot:",
           ["Left Foot", "Right Foot"],
-          horizontal=True,
+          index=None,
+          placeholder="Select a foot...",
           key="as4_inspect_foot",
       )
     with v_col2:
-      inspect_strike_idx = st.selectbox(
+      inspect_strike_choice = st.selectbox(
           "Inspect Strike Number:",
           options=list(range(1, 6)),
           format_func=lambda x: f"Strike {x}",
+          index=None,
+          placeholder="Select a strike number...",
           key="as4_inspect_strike_idx",
-      ) - 1
+      )
 
+    if inspect_foot is None or inspect_strike_choice is None:
+      st.info("Select both a Foot and a Strike Number above to view the 6-component plots and COP paths.")
+      st.stop()
+
+    inspect_strike_idx = inspect_strike_choice - 1
     cur_s, cur_e = st.session_state["as4_strike_windows"][inspect_foot][inspect_strike_idx]
     
     st.info(
@@ -2385,7 +2414,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     EPSILON = 1e-6
     gate_mask = np.abs(fz_sub) >= fz_gate_threshold
 
-    # Standard laboratory coordinate COP formulation
     cop_x_sub = np.where(gate_mask, -my_sub / (fz_sub + EPSILON), np.nan)
     cop_y_sub = np.where(gate_mask, mx_sub / (fz_sub + EPSILON), np.nan)
 
@@ -2394,7 +2422,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     
     col_p1, col_p2 = st.columns(2)
     with col_p1:
-      # COP Time Series
       fig_cop_ts = go.Figure()
       fig_cop_ts.add_trace(
           go.Scatter(x=t_sub, y=cop_x_sub, mode="lines", name="COPx (M-L)", line=dict(color="#38bdf8", width=2))
@@ -2414,7 +2441,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       st.plotly_chart(fig_cop_ts, use_container_width=True)
 
     with col_p2:
-      # Planar COP (Butterfly / Vector Path)
       fig_planar = go.Figure()
       valid_cop_mask = ~np.isnan(cop_x_sub) & ~np.isnan(cop_y_sub)
 
@@ -2435,7 +2461,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
                 name="COP Progression",
             )
         )
-        # Mark entry and exit
         fig_planar.add_trace(
             go.Scatter(
                 x=[cop_x_sub[valid_cop_mask][0]],
@@ -2546,3 +2571,4 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           * Discuss a representative purpose for calculating COP (e.g., assessing postural stability, dynamic balance control, foot pronation/supination patterns, or diabetic plantar pressure distribution).
           """
       )
+          
