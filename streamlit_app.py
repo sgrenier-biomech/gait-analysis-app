@@ -2581,90 +2581,11 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     st.markdown("---")
 
-# -------------------------------------------------------------------------
-    # PART 3: COP CALCULATION PARAMETERS & DATA SOURCE (INHERITED DIRECTLY FROM PART 1)
-    # -------------------------------------------------------------------------
-    st.markdown("### Part 3: COP Calculation Parameters & Data Source")
-    
-    # 1. Direct Priority: If user selected an FP1 or FP2 channel in Part 1, lock to that plate
-    if detection_channel and any(x in detection_channel for x in ["Plate 2", "FP2", "F2", "M2"]):
-      inferred_plate = "FP2"
-    elif detection_channel and any(x in detection_channel for x in ["Plate 1", "FP1", "F1", "M1"]):
-      inferred_plate = "FP1"
-    # 2. Secondary fallback only if kinematics/markers/angles were used for detection
-    elif fp1_foot_contact is not None:
-      inferred_plate = "FP1" if as4_active_foot == fp1_foot_contact else "FP2"
-    else:
-      inferred_plate = "FP1"
-
-    p_char = "2" if inferred_plate == "FP2" else "1"
-    selected_fp = raw_fp2 if p_char == "2" else raw_fp1
-    fp_time = selected_fp.time
-
-    # Inherit threshold and filter settings from Part 1
-    fz_gate_threshold = float(thresh_val) if thresh_val > 0.0 else 25.0
-    active_filt_label = as4_filter_mode if detection_channel is not None else "None (Raw)"
-
-    st.info(
-        f"**Inherited Parameters from Part 1:** Force Plate: **{inferred_plate}** | "
-        f"Conditioning: **{active_filt_label}** | "
-        f"Debiasing: **{'Active' if as4_apply_debias else 'Off'}** | "
-        f"Vertical Gate Threshold: **|Fz| ≥ {fz_gate_threshold:.1f} N**"
-    )
-
-    # Full transformation pipeline identical to Part 1
-    def condition_channel(sig_arr, is_moment=False):
-      out = np.copy(sig_arr)
-
-      # 1. Scaling & Inversion
-      if not is_moment and as4_apply_scale:
-        out = out * 1.0
-      elif is_moment and as4_apply_mscale:
-        out = out * 1.0
-
-      # 2. Quiescent Baseline Debiasing (Zeroing)
-      if as4_apply_debias and as4_b_end > as4_b_start:
-        b_mask = (fp_time >= as4_b_start) & (fp_time <= as4_b_end)
-        if np.any(b_mask):
-          offset_val = float(np.mean(out[b_mask]))
-          out -= offset_val
-
-      # 3. Filtering
-      dt_samp = float(np.mean(np.diff(fp_time))) if len(fp_time) > 1 else 0.001
-      fs_rate = 1.0 / dt_samp if dt_samp > 0 else 1000.0
-      nyq_rate = 0.5 * fs_rate
-
-      try:
-        if active_filt_label == "Butterworth Low-pass" and as4_fc is not None:
-          wn = min(max(as4_fc / nyq_rate, 0.001), 0.999)
-          sos = signal.butter(4, wn, btype="low", output="sos")
-          out = signal.sosfiltfilt(sos, out)
-        elif active_filt_label == "Butterworth High-pass" and as4_fc is not None:
-          wn = min(max(as4_fc / nyq_rate, 0.001), 0.999)
-          sos = signal.butter(4, wn, btype="high", output="sos")
-          out = signal.sosfiltfilt(sos, out)
-        elif active_filt_label == "Moving Average Smoothing" and as4_smooth_window is not None:
-          w_len = max(3, int(as4_smooth_window))
-          out = np.convolve(out, np.ones(w_len) / w_len, mode="same")
-      except Exception:
-        pass
-
-      return out
-
-    # Process all 6 components identically to Part 1
-    fx_raw = condition_channel(selected_fp.data.get(f"F{p_char}X", np.zeros_like(fp_time)), is_moment=False)
-    fy_raw = condition_channel(selected_fp.data.get(f"F{p_char}Y", np.zeros_like(fp_time)), is_moment=False)
-    fz_raw = condition_channel(selected_fp.data.get(f"F{p_char}Z", np.zeros_like(fp_time)), is_moment=False)
-    mx_raw = condition_channel(selected_fp.data.get(f"M{p_char}X", np.zeros_like(fp_time)), is_moment=True)
-    my_raw = condition_channel(selected_fp.data.get(f"M{p_char}Y", np.zeros_like(fp_time)), is_moment=True)
-    mz_raw = condition_channel(selected_fp.data.get(f"M{p_char}Z", np.zeros_like(fp_time)), is_moment=True)
-
-    st.markdown("---")
     
 # -------------------------------------------------------------------------
-    # PART 4: KINETIC & COP DELIVERABLES (DIRECTLY INHERITED FROM PART 1 & 2)
+    # PART 3: KINETIC & COP DELIVERABLES (DIRECTLY INHERITED FROM PART 1 & 2)
     # -------------------------------------------------------------------------
-    st.markdown("### Part 4: Kinetic & COP Deliverables")
+    st.markdown("### Part 3: Kinetic & COP Deliverables")
 
     # Determine force platform directly from Part 1 selection
     if detection_channel and any(x in detection_channel for x in ["Plate 2", "FP2", "F2", "M2"]):
