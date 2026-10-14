@@ -3332,13 +3332,13 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           """
       )
           
-  # =========================================================================
+# =========================================================================
   # ASSIGNMENT 5: DYNAMIC 3D KINETICS, LCS & GRF ANIMATION
   # =========================================================================
   with active_tabs[5]:
     st.subheader("Assignment 5: 3D Gait Animation with Joint LCS & Ground Reaction Force Vectors")
 
-    # Display assigned C3D filename
+    # 1. Retrieve Assigned C3D Filename
     assigned_file_name = "None (No file uploaded)"
     if "c3d_file_path" in st.session_state and st.session_state["c3d_file_path"]:
       assigned_file_name = Path(st.session_state["c3d_file_path"]).name
@@ -3349,15 +3349,15 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     with col_sub_info1:
       st.markdown(f"**Assigned C3D Trial File:** `{assigned_file_name}`")
     with col_sub_info2:
-      st.caption("Submit this exact filename with your laboratory report.")
+      st.caption("Submit this exact filename on your laboratory report cover page.")
 
     st.markdown(
-        """
+        f"""
         ### Submission Deliverables:
         1. **Screen Grab Video:** Record a video of your C3D trial playing in the 3D player below with:
            * **Local Coordinate Systems (LCS)** displayed at the Pelvis, Left/Right Hips, Knees, and Ankles (Red = X, Green = Y, Blue = Z).
-           * **Ground Reaction Force (GRF) Vector** (yellow arrow) originating at the Center of Pressure (red sphere) during foot contact.
-        2. **Assigned Filename:** Submit the name of the C3D file assigned to you.
+           * **Ground Reaction Force (GRF) Vector** (yellow arrow) dynamically anchored at the Center of Pressure (red sphere) tracking beneath the foot during contact.
+        2. **Assigned Filename:** Submit the verified filename (`{assigned_file_name}`) with your report.
         """
     )
 
@@ -3367,13 +3367,9 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     raw_fp2 = st.session_state.get("FP2_raw")
 
     if markers is not None and hasattr(markers, "data") and frames_ts is not None:
-      n_marker_frames = len(markers.time)
       m_time = markers.time
 
-      cop_aligned = np.full((n_marker_frames, 3), np.nan)
-      force_aligned = np.full((n_marker_frames, 3), np.nan)
-
-      # Determine which platform to read from based on Assignment 4 selections
+      # 2. Determine target platform based on Assignment 4 settings
       p_char = "1"
       if "as4_det_chan" in st.session_state and st.session_state["as4_det_chan"]:
         p_char = "2" if any(x in st.session_state["as4_det_chan"] for x in ["2", "FP2"]) else "1"
@@ -3381,42 +3377,89 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       active_fp = raw_fp1 if p_char == "1" else raw_fp2
       fp_time = active_fp.time
 
+      # 3. Determine Force Platform Global Laboratory Origin
+      fp_global_origin = np.array([0.0, 0.0, 0.0])
+      c3d_path = st.session_state.get("c3d_file_path")
+
+      if c3d_path and Path(c3d_path).exists():
+        try:
+          c3d_raw_obj = ktk.read_c3d(str(c3d_path))
+          fplate_meta = c3d_raw_obj.get("ForcePlatforms")
+          if fplate_meta and hasattr(fplate_meta, "info") and "parameters" in fplate_meta.info:
+            origins = fplate_meta.info["parameters"].get("FORCE_PLATFORM", {}).get("ORIGIN", {}).get("DATA", [])
+            idx = int(p_char) - 1
+            if len(origins) > idx:
+              fp_global_origin = np.array(origins[idx][:3], dtype=float)
+
+          # Fallback: Locate plate coordinates from anatomical foot contact landmark
+          if np.all(fp_global_origin == 0.0):
+            fz_trace = np.abs(active_fp.data.get(f"F{p_char}Z", np.zeros_like(fp_time)))
+            contact_idx = np.where(fz_trace > 80.0)[0]
+            if len(contact_idx) > 0:
+              t_contact = fp_time[contact_idx[0]]
+              m_idx = np.argmin(np.abs(m_time - t_contact))
+              ref_marker = "RCAL" if "Right" in st.session_state.get("as4_active_foot", "Right Foot") else "LCAL"
+              if ref_marker in markers.data:
+                fp_global_origin = np.copy(markers.data[ref_marker][m_idx, :3])
+                fp_global_origin[2] = 0.0  # Project to ground plane
+        except Exception:
+          pass
+
+      # 4. Extract Kinetics & Compute Global Centre of Pressure
       fx = active_fp.data.get(f"F{p_char}X", np.zeros_like(fp_time))
       fy = active_fp.data.get(f"F{p_char}Y", np.zeros_like(fp_time))
       fz = active_fp.data.get(f"F{p_char}Z", np.zeros_like(fp_time))
       mx = active_fp.data.get(f"M{p_char}X", np.zeros_like(fp_time))
       my = active_fp.data.get(f"M{p_char}Y", np.zeros_like(fp_time))
 
-      gate_thresh = float(st.session_state.get("as4_thresh_val", 30.0))
+      gate_thresh = float(st.session_state.get("as4_thresh_val", 35.0))
       if gate_thresh <= 0.0:
-        gate_thresh = 30.0
+        gate_thresh = 35.0
 
       EPSILON = 1e-6
       active_mask = np.abs(fz) >= gate_thresh
-      cop_x = np.where(active_mask, -my / (fz + EPSILON), np.nan)
-      cop_y = np.where(active_mask, mx / (fz + EPSILON), np.nan)
-      cop_z = np.zeros_like(cop_x)
 
-      # Resample 1200 Hz analog kinetics onto the 120 Hz marker timeline
-      for dim, arr in enumerate([cop_x, cop_y, cop_z]):
-        valid = ~np.isnan(arr)
-        if np.any(valid):
-          cop_aligned[:, dim] = np.interp(m_time, fp_time[valid], arr[valid], left=np.nan, right=np.nan)
+      cop_local_x = np.where(active_mask, -my / (fz + EPSILON), np.nan)
+      cop_local_y = np.where(active_mask, mx / (fz + EPSILON), np.nan)
 
-      for dim, arr in enumerate([fx, fy, fz]):
-        force_aligned[:, dim] = np.interp(m_time, fp_time, arr)
+      cop_global_x = np.where(active_mask, fp_global_origin[0] + cop_local_x, np.nan)
+      cop_global_y = np.where(active_mask, fp_global_origin[1] + cop_local_y, np.nan)
+      cop_global_z = np.where(active_mask, fp_global_origin[2], np.nan)
+
+      # 5. Map Kinetics Synchronously onto Marker Frames
+      cop_aligned = []
+      force_aligned = []
+
+      for t_m in m_time:
+        idx_fp = np.argmin(np.abs(fp_time - t_m))
+        if active_mask[idx_fp]:
+          cop_aligned.append([
+              float(cop_global_x[idx_fp]),
+              float(cop_global_y[idx_fp]),
+              float(cop_global_z[idx_fp]),
+          ])
+          force_aligned.append([
+              float(fx[idx_fp]),
+              float(fy[idx_fp]),
+              float(fz[idx_fp]),
+          ])
+        else:
+          cop_aligned.append(None)
+          force_aligned.append(None)
 
       grf_data_payload = {
-          "cop": cop_aligned.tolist(),
-          "force": force_aligned.tolist(),
+          "cop": cop_aligned,
+          "force": force_aligned,
       }
 
+      # 6. Filter Joint Transform Frames to Target Anatomical Segments
       req_joints = ["Pelvis", "ThighL", "ThighR", "ShankL", "ShankR", "FootL", "FootR"]
       filtered_frames = ktk.TimeSeries(time=frames_ts.time)
       for j in req_joints:
         if j in frames_ts.data:
           filtered_frames.data[j] = frames_ts.data[j]
 
+      # 7. Render Assignment 5 Dedicated WebGL Viewer
       html_kinetic_viewer = build_threejs_kinetic_viewer(
           markers=markers,
           interconnections=INTERCONNECTIONS,
