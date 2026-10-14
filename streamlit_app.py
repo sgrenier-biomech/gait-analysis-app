@@ -163,6 +163,23 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
     * {{ box-sizing: border-box; margin: 0; padding: 0; user-select: none; }}
     body {{ background: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; width: 100vw; height: 100vh; }}
     #viewport {{ width: 100%; height: 100%; position: absolute; top: 0; left: 0; }}
+    #marker-tooltip {{
+      position: absolute;
+      display: none;
+      pointer-events: none;
+      background: rgba(15, 23, 42, 0.92);
+      color: #38bdf8;
+      font-family: monospace;
+      font-weight: 700;
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+      transform: translate(-50%, -130%);
+      z-index: 20;
+      white-space: nowrap;
+    }}
     #controls-card {{
       position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
       width: calc(100% - 32px); max-width: 960px;
@@ -198,6 +215,8 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
+  <div id="marker-tooltip"></div>
+
   <div class="preset-group">
     <button class="btn-preset" onclick="setPreset('side')">Sagittal (Side)</button>
     <button class="btn-preset" onclick="setPreset('front')">Frontal</button>
@@ -256,6 +275,7 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
 
     const lineObjects = [];
     const jointSpheres = [];
+    const interactiveSpheres = [];
 
     data.segments.forEach(seg => {{
       const geom = new THREE.BufferGeometry();
@@ -270,9 +290,35 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
     const sphereGeom = new THREE.SphereGeometry(0.015, 12, 12);
     const sphereMat = new THREE.MeshBasicMaterial({{ color: 0xffffff }});
     Object.keys(data.markers).forEach(m => {{
-      const mesh = new THREE.Mesh(sphereGeom, sphereMat);
+      const mesh = new THREE.Mesh(sphereGeom, sphereMat.clone());
+      mesh.userData = {{ markerName: m }};
       scene.add(mesh);
       jointSpheres.push({{ mesh, marker: m }});
+      interactiveSpheres.push(mesh);
+    }});
+
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2(-999, -999);
+    const tooltip = document.getElementById('marker-tooltip');
+    let hoveredMesh = null;
+
+    container.addEventListener('mousemove', (e) => {{
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      tooltip.style.left = `${{e.clientX}}px`;
+      tooltip.style.top = `${{e.clientY}}px`;
+    }});
+
+    container.addEventListener('mouseleave', () => {{
+      mouse.x = -999;
+      mouse.y = -999;
+      tooltip.style.display = 'none';
+      if (hoveredMesh) {{
+        hoveredMesh.scale.set(1, 1, 1);
+        hoveredMesh.material.color.setHex(0xffffff);
+        hoveredMesh = null;
+      }}
     }});
 
     function updatePose(fIdx) {{
@@ -341,6 +387,34 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
     function loop(now) {{
       requestAnimationFrame(loop);
       controls.update();
+
+      if (mouse.x > -900) {{
+        raycaster.setFromCamera(mouse, camera);
+        const visibleSpheres = interactiveSpheres.filter(s => s.visible);
+        const intersects = raycaster.intersectObjects(visibleSpheres);
+
+        if (intersects.length > 0) {{
+          const hit = intersects[0].object;
+          if (hoveredMesh !== hit) {{
+            if (hoveredMesh) {{
+              hoveredMesh.scale.set(1, 1, 1);
+              hoveredMesh.material.color.setHex(0xffffff);
+            }}
+            hoveredMesh = hit;
+            hoveredMesh.scale.set(1.8, 1.8, 1.8);
+            hoveredMesh.material.color.setHex(0x38bdf8);
+          }}
+          tooltip.textContent = hit.userData.markerName;
+          tooltip.style.display = 'block';
+        }} else {{
+          if (hoveredMesh) {{
+            hoveredMesh.scale.set(1, 1, 1);
+            hoveredMesh.material.color.setHex(0xffffff);
+            hoveredMesh = null;
+          }}
+          tooltip.style.display = 'none';
+        }}
+      }}
 
       if (isPlaying && nFrames > 0) {{
         const dt = (now - lastTime) / 1000;
@@ -1252,7 +1326,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     st.markdown("---")
 
-# =============================================================
+    # =============================================================
     # STEP 2A: BASELINE ZEROING FOR FORCE PLATFORM 1
     # =============================================================
     st.markdown("### Step 2a: Baseline Zeroing (De-bias) — Force Platform 1")
@@ -1574,7 +1648,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             format="%.3f",
             key=f"as3_bs_FP2_{v2}",
         )
-        st.session_state["as3_FP2_base_e"] = as3_b_start_fp2
+        st.session_state["as3_FP2_base_s"] = as3_b_start_fp2
     with c2_b2:
         as3_b_end_fp2 = st.number_input(
             "FP2 Baseline End (s):",
@@ -1603,7 +1677,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
 
     st.markdown("---")
 
-# =============================================================
+    # =============================================================
     # STEP 3: SELECT TWO FOOTSTRIKES FROM FULL SIGNAL
     # =============================================================
     st.markdown("### Step 3: Select Two Footstrikes from Full Signal")
