@@ -2120,7 +2120,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     t_min = float(raw_fp1.time[0])
     t_max = float(raw_fp1.time[-1])
 
-    # -------------------------------------------------------------------------
+# -------------------------------------------------------------------------
     # PART 1: EVENT IDENTIFICATION CRITERIA CONFIGURATION
     # -------------------------------------------------------------------------
     st.markdown("### Part 1: Event Identification Criteria")
@@ -2143,11 +2143,23 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           help="Choose which physical measurement stream governs event boundary detection.",
       )
 
+    detection_channel = None
     with c_crit2:
       if event_modality == "Force Plate Kinetics (Analog)":
         detection_channel = st.selectbox(
             "Primary Signal Channel:",
-            ["F1Z / F2Z (Vertical)", "F1Y / F2Y (A-P Shear)", "F1X / F2X (M-L Shear)", "Resultant GRF Magnitude", "M1Z / M2Z (Free Moment)"],
+            [
+                "F1Z (Plate 1 Vertical)",
+                "F2Z (Plate 2 Vertical)",
+                "F1Y (Plate 1 A-P Shear)",
+                "F2Y (Plate 2 A-P Shear)",
+                "F1X (Plate 1 M-L Shear)",
+                "F2X (Plate 2 M-L Shear)",
+                "Resultant GRF Magnitude (FP1)",
+                "Resultant GRF Magnitude (FP2)",
+                "M1Z (Plate 1 Free Torque)",
+                "M2Z (Plate 2 Free Torque)",
+            ],
             index=None,
             placeholder="Select a variable...",
             key="as4_det_chan",
@@ -2205,17 +2217,99 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           key="as4_polarity",
       )
     with c_param3:
-      foot_assignment_mode = st.selectbox(
-          "Strike-to-Foot Allocation Strategy:",
-          [
-              "Platform Alternation (FP1=Left, FP2=Right)",
-              "Kinematic Proximity (Heel Marker Distance to Plate)",
-              "Manual User Classification",
-          ],
+      fp1_foot_contact = st.selectbox(
+          "Foot Striking FP1:",
+          ["Right Foot", "Left Foot"],
           index=None,
-          placeholder="Select an allocation strategy...",
-          key="as4_foot_assign",
+          placeholder="Select foot striking FP1...",
+          key="as4_fp1_foot_strike",
+          help="Identify which anatomical foot made contact with Force Platform 1.",
       )
+
+    # -------------------------------------------------------------------------
+    # PART 1B: PRIMARY SIGNAL CHANNEL GRAPH FOR EVENT IDENTIFICATION
+    # -------------------------------------------------------------------------
+    st.markdown("#### Primary Detection Signal Trace")
+    
+    if detection_channel is None:
+      st.info("Select a Primary Signal Channel above to preview the signal waveform and identify foot strikes.")
+    else:
+      sig_time = None
+      sig_data = None
+      sig_units = "Arbitrary Units"
+
+      # 1. Kinetic Channels
+      if event_modality == "Force Plate Kinetics (Analog)":
+        target_fp = raw_fp1 if "1" in detection_channel else raw_fp2
+        p_num = "1" if "1" in detection_channel else "2"
+        sig_time = target_fp.time
+
+        if "Vertical" in detection_channel:
+          sig_data = target_fp.data.get(f"F{p_num}Z", np.zeros_like(sig_time))
+          sig_units = "Force (N)"
+        elif "A-P" in detection_channel:
+          sig_data = target_fp.data.get(f"F{p_num}Y", np.zeros_like(sig_time))
+          sig_units = "Force (N)"
+        elif "M-L" in detection_channel:
+          sig_data = target_fp.data.get(f"F{p_num}X", np.zeros_like(sig_time))
+          sig_units = "Force (N)"
+        elif "Resultant" in detection_channel:
+          fx = target_fp.data.get(f"F{p_num}X", np.zeros_like(sig_time))
+          fy = target_fp.data.get(f"F{p_num}Y", np.zeros_like(sig_time))
+          fz = target_fp.data.get(f"F{p_num}Z", np.zeros_like(sig_time))
+          sig_data = np.sqrt(fx**2 + fy**2 + fz**2)
+          sig_units = "Force (N)"
+        elif "Torque" in detection_channel or "Moment" in detection_channel:
+          sig_data = target_fp.data.get(f"M{p_num}Z", np.zeros_like(sig_time))
+          sig_units = "Moment (N·m)"
+
+      # 2. Kinematic Marker Trajectory (Vertical Position / Z-axis)
+      elif event_modality == "Kinematic Marker Trajectories (Points)":
+        sig_time = markers_ts.time
+        m_arr = markers_ts.data.get(detection_channel, np.zeros((len(sig_time), 3)))
+        sig_data = m_arr[:, 2]  # Z vertical coordinate
+        sig_units = "Vertical Position (m)"
+
+      # 3. Sagittal Joint Angle
+      elif event_modality == "Sagittal Joint Angles":
+        sig_time = angles_ts.time
+        ang_arr = angles_ts.data.get(detection_channel, np.zeros((len(sig_time), 3)))
+        sig_data = ang_arr[:, 0]  # Flexion / extension
+        sig_units = "Angle (deg)"
+
+      # Plot the selected detection channel
+      if sig_data is not None:
+        fig_det = go.Figure()
+        fig_det.add_trace(
+            go.Scatter(
+                x=sig_time,
+                y=sig_data,
+                mode="lines",
+                name=detection_channel,
+                line=dict(color="#38bdf8", width=1.8),
+            )
+        )
+
+        # Overlay threshold guide line if configured
+        if thresh_val != 0.0:
+          fig_det.add_hline(
+              y=thresh_val,
+              line_dash="dash",
+              line_color="#f59e0b",
+              annotation_text=f"Threshold ({thresh_val})",
+              annotation_position="top left",
+          )
+
+        fig_det.update_layout(
+            title=f"Event Detection Signal: {detection_channel}",
+            xaxis_title="Time (s)",
+            yaxis_title=sig_units,
+            template="plotly_dark",
+            hovermode="x unified",
+            height=360,
+            margin=dict(l=20, r=20, t=40, b=20),
+        )
+        st.plotly_chart(fig_det, use_container_width=True)
 
     st.markdown("---")
 
