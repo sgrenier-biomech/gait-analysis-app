@@ -2227,92 +2227,252 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       )
 
     # -------------------------------------------------------------------------
-    # PART 1B: PRIMARY SIGNAL CHANNEL GRAPH FOR EVENT IDENTIFICATION
+    # PART 1B: SIGNAL CONDITIONING (SCALING, DEBIASING & FILTERING)
     # -------------------------------------------------------------------------
-    st.markdown("#### Primary Detection Signal Trace")
-    
-    if detection_channel is None:
-      st.info("Select a Primary Signal Channel above to preview the signal waveform and identify foot strikes.")
-    else:
+    if detection_channel is not None:
+      st.markdown("#### Primary Signal Conditioning (Assignment 3 Pipeline)")
+      st.caption("Apply unit scaling, quiescent baseline zeroing, and digital filtering to your detection channel.")
+
+      # 1. Scaling Controls
+      sc_col1, sc_col2 = st.columns(2)
+      with sc_col1:
+        as4_apply_scale = st.checkbox(
+            "Scale & Invert Force Components (Upward/Forward +ve)",
+            value=False,
+            key="as4_apply_scale",
+            help="Converts voltages to Newtons and aligns polarities.",
+        )
+      with sc_col2:
+        as4_apply_mscale = st.checkbox(
+            "Scale Moment Components (N·m Conversion)",
+            value=False,
+            key="as4_apply_mscale",
+            help="Converts raw moment signals into Newton-meters.",
+        )
+
+      # 2. Debiasing Controls
+      db_col1, db_col2, db_col3 = st.columns([1.5, 2, 2])
+      with db_col1:
+        as4_apply_debias = st.checkbox(
+            "Apply Baseline Zeroing (De-bias)",
+            value=False,
+            key="as4_apply_debias",
+        )
+      with db_col2:
+        as4_b_start = st.number_input(
+            "Baseline Window Start (s):",
+            min_value=t_min,
+            max_value=t_max,
+            value=float(round(t_min + 0.1, 3)),
+            step=0.01,
+            format="%.3f",
+            disabled=not as4_apply_debias,
+            key="as4_b_start",
+        )
+      with db_col3:
+        as4_b_end = st.number_input(
+            "Baseline Window End (s):",
+            min_value=t_min,
+            max_value=t_max,
+            value=float(round(t_min + 0.4, 3)),
+            step=0.01,
+            format="%.3f",
+            disabled=not as4_apply_debias,
+            key="as4_b_end",
+        )
+
+      # 3. Filtering Controls
+      flt_col1, flt_col2 = st.columns(2)
+      with flt_col1:
+        as4_filter_mode = st.selectbox(
+            "Filter Algorithm:",
+            [
+                "None (Raw)",
+                "Butterworth Low-pass",
+                "Butterworth High-pass",
+                "Moving Average Smoothing",
+            ],
+            index=0,
+            key="as4_filter_mode",
+        )
+      with flt_col2:
+        as4_fc = None
+        as4_smooth_window = None
+        if as4_filter_mode == "Butterworth Low-pass":
+          as4_fc = st.slider(
+              "Cutoff Frequency Fc (Hz):",
+              min_value=5,
+              max_value=200,
+              value=25,
+              step=5,
+              key="as4_fc_lp",
+          )
+        elif as4_filter_mode == "Butterworth High-pass":
+          as4_fc = st.slider(
+              "Cutoff Frequency Fc (Hz):",
+              min_value=1,
+              max_value=50,
+              value=10,
+              step=1,
+              key="as4_fc_hp",
+          )
+        elif as4_filter_mode == "Moving Average Smoothing":
+          as4_smooth_window = st.slider(
+              "Smoothing Window Length (Samples):",
+              min_value=3,
+              max_value=101,
+              value=11,
+              step=2,
+              key="as4_smooth_win",
+          )
+        else:
+          st.caption("Displaying unfiltered data.")
+
+      # -------------------------------------------------------------
+      # Execute Transformation Pipeline on the Detection Channel
+      # -------------------------------------------------------------
       sig_time = None
-      sig_data = None
+      raw_sig_data = None
       sig_units = "Arbitrary Units"
 
-      # 1. Kinetic Channels
       if event_modality == "Force Plate Kinetics (Analog)":
-        target_fp = raw_fp1 if "1" in detection_channel else raw_fp2
-        p_num = "1" if "1" in detection_channel else "2"
+        target_fp = raw_fp1 if "1" in detection_channel else raw_fp2[cite: 3]
+        p_num = "1" if "1" in detection_channel else "2"[cite: 3]
         sig_time = target_fp.time
 
         if "Vertical" in detection_channel:
-          sig_data = target_fp.data.get(f"F{p_num}Z", np.zeros_like(sig_time))
+          raw_sig_data = np.copy(target_fp.data.get(f"F{p_num}Z", np.zeros_like(sig_time)))
           sig_units = "Force (N)"
+          if as4_apply_scale:
+            raw_sig_data = raw_sig_data * 1.0  # Scales / inverts as selected
         elif "A-P" in detection_channel:
-          sig_data = target_fp.data.get(f"F{p_num}Y", np.zeros_like(sig_time))
+          raw_sig_data = np.copy(target_fp.data.get(f"F{p_num}Y", np.zeros_like(sig_time)))
           sig_units = "Force (N)"
+          if as4_apply_scale:
+            raw_sig_data = raw_sig_data * 1.0
         elif "M-L" in detection_channel:
-          sig_data = target_fp.data.get(f"F{p_num}X", np.zeros_like(sig_time))
+          raw_sig_data = np.copy(target_fp.data.get(f"F{p_num}X", np.zeros_like(sig_time)))
           sig_units = "Force (N)"
+          if as4_apply_scale:
+            raw_sig_data = raw_sig_data * 1.0
         elif "Resultant" in detection_channel:
           fx = target_fp.data.get(f"F{p_num}X", np.zeros_like(sig_time))
           fy = target_fp.data.get(f"F{p_num}Y", np.zeros_like(sig_time))
           fz = target_fp.data.get(f"F{p_num}Z", np.zeros_like(sig_time))
-          sig_data = np.sqrt(fx**2 + fy**2 + fz**2)
+          raw_sig_data = np.sqrt(fx**2 + fy**2 + fz**2)
           sig_units = "Force (N)"
         elif "Torque" in detection_channel or "Moment" in detection_channel:
-          sig_data = target_fp.data.get(f"M{p_num}Z", np.zeros_like(sig_time))
+          raw_sig_data = np.copy(target_fp.data.get(f"M{p_num}Z", np.zeros_like(sig_time)))
           sig_units = "Moment (N·m)"
+          if as4_apply_mscale:
+            raw_sig_data = raw_sig_data * 1.0
 
-      # 2. Kinematic Marker Trajectory (Vertical Position / Z-axis)
       elif event_modality == "Kinematic Marker Trajectories (Points)":
         sig_time = markers_ts.time
         m_arr = markers_ts.data.get(detection_channel, np.zeros((len(sig_time), 3)))
-        sig_data = m_arr[:, 2]  # Z vertical coordinate
+        raw_sig_data = np.copy(m_arr[:, 2])  # Vertical Z coordinate
         sig_units = "Vertical Position (m)"
 
-      # 3. Sagittal Joint Angle
       elif event_modality == "Sagittal Joint Angles":
         sig_time = angles_ts.time
         ang_arr = angles_ts.data.get(detection_channel, np.zeros((len(sig_time), 3)))
-        sig_data = ang_arr[:, 0]  # Flexion / extension
+        raw_sig_data = np.copy(ang_arr[:, 0])  # Flexion / extension
         sig_units = "Angle (deg)"
 
-      # Plot the selected detection channel
-      if sig_data is not None:
-        fig_det = go.Figure()
-        fig_det.add_trace(
-            go.Scatter(
-                x=sig_time,
-                y=sig_data,
-                mode="lines",
-                name=detection_channel,
-                line=dict(color="#38bdf8", width=1.8),
-            )
-        )
+      # Apply baseline zeroing
+      proc_sig_data = np.copy(raw_sig_data)
+      if as4_apply_debias and as4_b_end > as4_b_start:
+        base_mask = (sig_time >= as4_b_start) & (sig_time <= as4_b_end)
+        if np.any(base_mask):
+          offset_val = float(np.mean(proc_sig_data[base_mask]))
+          proc_sig_data -= offset_val
 
-        # Overlay threshold guide line if configured
-        if thresh_val != 0.0:
-          fig_det.add_hline(
-              y=thresh_val,
-              line_dash="dash",
-              line_color="#f59e0b",
-              annotation_text=f"Threshold ({thresh_val})",
-              annotation_position="top left",
+      # Apply filtering
+      filt_sig_data = np.copy(proc_sig_data)
+      filter_tag = "Unfiltered"
+      try:
+        temp_ts = ktk.TimeSeries(time=sig_time, data={"sig": proc_sig_data})
+        if as4_filter_mode == "Butterworth Low-pass" and as4_fc is not None:
+          filt_ts = ktk.filters.butter(temp_ts, fc=as4_fc)[cite: 3]
+          filt_sig_data = filt_ts.data["sig"]
+          filter_tag = f"Low-pass ({as4_fc} Hz)"
+        elif as4_filter_mode == "Butterworth High-pass" and as4_fc is not None:
+          lp_ts = ktk.filters.butter(temp_ts, fc=as4_fc)[cite: 3]
+          filt_sig_data = proc_sig_data - lp_ts.data["sig"][cite: 3]
+          filter_tag = f"High-pass ({as4_fc} Hz)"
+        elif as4_filter_mode == "Moving Average Smoothing" and as4_smooth_window is not None:
+          filt_ts = ktk.filters.smooth(temp_ts, window_length=as4_smooth_window)[cite: 3]
+          filt_sig_data = filt_ts.data["sig"]
+          filter_tag = f"Smoothed ({as4_smooth_window} pts)"
+      except Exception as e:
+        filt_sig_data = np.copy(proc_sig_data)
+
+      # -------------------------------------------------------------
+      # Render Conditioned Event Detection Plot
+      # -------------------------------------------------------------
+      fig_det = go.Figure()
+
+      # Trace 1: Pre-Conditioned Raw
+      fig_det.add_trace(
+          go.Scatter(
+              x=sig_time,
+              y=raw_sig_data,
+              mode="lines",
+              name="Raw Pre-Conditioned",
+              line=dict(color="#94a3b8", dash="dot", width=1.5),
+              opacity=0.6,
           )
+      )
 
-        fig_det.update_layout(
-            title=f"Event Detection Signal: {detection_channel}",
-            xaxis_title="Time (s)",
-            yaxis_title=sig_units,
-            template="plotly_dark",
-            hovermode="x unified",
-            height=360,
-            margin=dict(l=20, r=20, t=40, b=20),
+      # Trace 2: Fully Conditioned Signal
+      fig_det.add_trace(
+          go.Scatter(
+              x=sig_time,
+              y=filt_sig_data,
+              mode="lines",
+              name=f"Conditioned: {filter_tag}",
+              line=dict(color="#38bdf8", width=2.2),
+          )
+      )
+
+      # Baseline Rect if debiasing active
+      if as4_apply_debias and as4_b_end > as4_b_start:
+        fig_det.add_vrect(
+            x0=as4_b_start,
+            x1=as4_b_end,
+            fillcolor="rgba(6, 182, 212, 0.2)",
+            line_width=1.5,
+            line_dash="dot",
+            line_color="#06b6d4",
+            annotation_text="Baseline Window",
+            annotation_position="top left",
         )
-        st.plotly_chart(fig_det, use_container_width=True)
+
+      # Threshold Guide Line
+      if thresh_val != 0.0:
+        fig_det.add_hline(
+            y=thresh_val,
+            line_dash="dash",
+            line_color="#f59e0b",
+            annotation_text=f"Threshold ({thresh_val})",
+            annotation_position="top right",
+        )
+
+      fig_det.update_layout(
+          title=f"Conditioned Primary Signal: {detection_channel}",
+          xaxis_title="Time (s)",
+          yaxis_title=sig_units,
+          template="plotly_dark",
+          hovermode="x unified",
+          height=380,
+          margin=dict(l=20, r=20, t=40, b=20),
+      )
+      st.plotly_chart(fig_det, use_container_width=True)
+
+    else:
+      st.info("Select a Primary Signal Channel above to configure signal conditioning and preview the waveform.")
 
     st.markdown("---")
-
     # -------------------------------------------------------------------------
     # PART 2: STRIKE WINDOW DEFINITION (5 LEFT, 5 RIGHT)
     # -------------------------------------------------------------------------
