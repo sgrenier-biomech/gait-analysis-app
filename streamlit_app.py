@@ -2106,11 +2106,13 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.subheader("Assignment 4: Centre of Pressure Across Multiple Foot Strikes")
     st.markdown(
         """
-        In this lab, you must isolate **5 distinct foot strikes for each foot** (10 total strikes). 
-        You will configure the criteria used to detect Foot Strike (Heel Strike) and Toe-Off, 
-        inspect the 6-component kinetics during contact, and evaluate the planar and time-series Center of Pressure (COP).
+        In this lab, you will configure criteria to detect Foot Strike (Heel Strike) and Toe-Off, 
+        isolate 5 strikes for your chosen foot, inspect the 6-component kinetics during contact, 
+        and evaluate the planar and time-series Center of Pressure (COP).
         """
     )
+
+    from scipy import signal
 
     angles_ts = st.session_state["angles"]
     markers_ts = st.session_state["markers"]
@@ -2120,7 +2122,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     t_min = float(raw_fp1.time[0])
     t_max = float(raw_fp1.time[-1])
 
-# -------------------------------------------------------------------------
+    # -------------------------------------------------------------------------
     # PART 1: EVENT IDENTIFICATION CRITERIA CONFIGURATION
     # -------------------------------------------------------------------------
     st.markdown("### Part 1: Event Identification Criteria")
@@ -2233,7 +2235,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       st.markdown("#### Primary Signal Conditioning (Assignment 3 Pipeline)")
       st.caption("Apply unit scaling, quiescent baseline zeroing, and digital filtering to your detection channel.")
 
-      # 1. Scaling Controls
       sc_col1, sc_col2 = st.columns(2)
       with sc_col1:
         as4_apply_scale = st.checkbox(
@@ -2250,7 +2251,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             help="Converts raw moment signals into Newton-meters.",
         )
 
-      # 2. Debiasing Controls
       db_col1, db_col2, db_col3 = st.columns([1.5, 2, 2])
       with db_col1:
         as4_apply_debias = st.checkbox(
@@ -2281,7 +2281,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             key="as4_b_end",
         )
 
-      # 3. Filtering Controls
       flt_col1, flt_col2 = st.columns(2)
       with flt_col1:
         as4_filter_mode = st.selectbox(
@@ -2302,8 +2301,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           as4_fc = st.slider(
               "Cutoff Frequency Fc (Hz):",
               min_value=5,
-              max_value=200,
-              value=25,
+              max_value=150,
+              value=20,
               step=5,
               key="as4_fc_lp",
           )
@@ -2321,30 +2320,28 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
               "Smoothing Window Length (Samples):",
               min_value=3,
               max_value=101,
-              value=11,
+              value=15,
               step=2,
               key="as4_smooth_win",
           )
         else:
           st.caption("Displaying unfiltered data.")
 
-      # -------------------------------------------------------------
-      # Execute Transformation Pipeline on the Detection Channel
-      # -------------------------------------------------------------
+      # Extract selected signal vector
       sig_time = None
       raw_sig_data = None
       sig_units = "Arbitrary Units"
 
       if event_modality == "Force Plate Kinetics (Analog)":
-        target_fp = raw_fp1 if "1" in detection_channel else raw_fp2[cite: 3]
-        p_num = "1" if "1" in detection_channel else "2"[cite: 3]
+        target_fp = raw_fp1 if "1" in detection_channel else raw_fp2
+        p_num = "1" if "1" in detection_channel else "2"
         sig_time = target_fp.time
 
         if "Vertical" in detection_channel:
           raw_sig_data = np.copy(target_fp.data.get(f"F{p_num}Z", np.zeros_like(sig_time)))
           sig_units = "Force (N)"
           if as4_apply_scale:
-            raw_sig_data = raw_sig_data * 1.0  # Scales / inverts as selected
+            raw_sig_data = raw_sig_data * 1.0
         elif "A-P" in detection_channel:
           raw_sig_data = np.copy(target_fp.data.get(f"F{p_num}Y", np.zeros_like(sig_time)))
           sig_units = "Force (N)"
@@ -2370,16 +2367,16 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       elif event_modality == "Kinematic Marker Trajectories (Points)":
         sig_time = markers_ts.time
         m_arr = markers_ts.data.get(detection_channel, np.zeros((len(sig_time), 3)))
-        raw_sig_data = np.copy(m_arr[:, 2])  # Vertical Z coordinate
+        raw_sig_data = np.copy(m_arr[:, 2])
         sig_units = "Vertical Position (m)"
 
       elif event_modality == "Sagittal Joint Angles":
         sig_time = angles_ts.time
         ang_arr = angles_ts.data.get(detection_channel, np.zeros((len(sig_time), 3)))
-        raw_sig_data = np.copy(ang_arr[:, 0])  # Flexion / extension
+        raw_sig_data = np.copy(ang_arr[:, 0])
         sig_units = "Angle (deg)"
 
-      # Apply baseline zeroing
+      # Debiasing
       proc_sig_data = np.copy(raw_sig_data)
       if as4_apply_debias and as4_b_end > as4_b_start:
         base_mask = (sig_time >= as4_b_start) & (sig_time <= as4_b_end)
@@ -2387,32 +2384,32 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           offset_val = float(np.mean(proc_sig_data[base_mask]))
           proc_sig_data -= offset_val
 
-      # Apply filtering
+      # Explicit SciPy filtering to guarantee visible curve conditioning
       filt_sig_data = np.copy(proc_sig_data)
       filter_tag = "Unfiltered"
+      dt_samp = float(np.mean(np.diff(sig_time))) if len(sig_time) > 1 else 0.001
+      fs_rate = 1.0 / dt_samp if dt_samp > 0 else 1000.0
+      nyq_rate = 0.5 * fs_rate
+
       try:
-        temp_ts = ktk.TimeSeries(time=sig_time, data={"sig": proc_sig_data})
         if as4_filter_mode == "Butterworth Low-pass" and as4_fc is not None:
-          filt_ts = ktk.filters.butter(temp_ts, fc=as4_fc)[cite: 3]
-          filt_sig_data = filt_ts.data["sig"]
+          wn = min(max(as4_fc / nyq_rate, 0.001), 0.999)
+          sos = signal.butter(4, wn, btype="low", output="sos")
+          filt_sig_data = signal.sosfiltfilt(sos, proc_sig_data)
           filter_tag = f"Low-pass ({as4_fc} Hz)"
         elif as4_filter_mode == "Butterworth High-pass" and as4_fc is not None:
-          lp_ts = ktk.filters.butter(temp_ts, fc=as4_fc)[cite: 3]
-          filt_sig_data = proc_sig_data - lp_ts.data["sig"][cite: 3]
+          wn = min(max(as4_fc / nyq_rate, 0.001), 0.999)
+          sos = signal.butter(4, wn, btype="high", output="sos")
+          filt_sig_data = signal.sosfiltfilt(sos, proc_sig_data)
           filter_tag = f"High-pass ({as4_fc} Hz)"
         elif as4_filter_mode == "Moving Average Smoothing" and as4_smooth_window is not None:
-          filt_ts = ktk.filters.smooth(temp_ts, window_length=as4_smooth_window)[cite: 3]
-          filt_sig_data = filt_ts.data["sig"]
-          filter_tag = f"Smoothed ({as4_smooth_window} pts)"
+          w_len = max(3, int(as4_smooth_window))
+          filt_sig_data = np.convolve(proc_sig_data, np.ones(w_len) / w_len, mode="same")
+          filter_tag = f"Smoothed ({w_len} pts)"
       except Exception as e:
         filt_sig_data = np.copy(proc_sig_data)
 
-      # -------------------------------------------------------------
-      # Render Conditioned Event Detection Plot
-      # -------------------------------------------------------------
       fig_det = go.Figure()
-
-      # Trace 1: Pre-Conditioned Raw
       fig_det.add_trace(
           go.Scatter(
               x=sig_time,
@@ -2423,8 +2420,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
               opacity=0.6,
           )
       )
-
-      # Trace 2: Fully Conditioned Signal
       fig_det.add_trace(
           go.Scatter(
               x=sig_time,
@@ -2435,7 +2430,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           )
       )
 
-      # Baseline Rect if debiasing active
       if as4_apply_debias and as4_b_end > as4_b_start:
         fig_det.add_vrect(
             x0=as4_b_start,
@@ -2448,7 +2442,6 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
             annotation_position="top left",
         )
 
-      # Threshold Guide Line
       if thresh_val != 0.0:
         fig_det.add_hline(
             y=thresh_val,
@@ -2473,11 +2466,19 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       st.info("Select a Primary Signal Channel above to configure signal conditioning and preview the waveform.")
 
     st.markdown("---")
+
     # -------------------------------------------------------------------------
-    # PART 2: STRIKE WINDOW DEFINITION (5 LEFT, 5 RIGHT)
+    # PART 2: ISOLATED FOOT STRIKE INTERVALS (SINGLE FOOT SELECTION)
     # -------------------------------------------------------------------------
-    st.markdown("### Part 2: Isolated Foot Strike Intervals (5 Left, 5 Right)")
-    st.caption("Specify the exact temporal windows [Start, End] for 5 strikes of each foot based on your selected criteria.")
+    st.markdown("### Part 2: Isolated Foot Strike Intervals")
+    st.caption("Select which foot you are isolating, then define the contact and toe-off boundaries for 5 distinct strikes.")
+
+    as4_active_foot = st.radio(
+        "Select Foot to Analyze (5 Strikes):",
+        ["Left Foot", "Right Foot"],
+        horizontal=True,
+        key="as4_active_foot_radio",
+    )
 
     if "as4_strike_windows" not in st.session_state:
       st.session_state["as4_strike_windows"] = {
@@ -2491,124 +2492,107 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           ],
       }
 
-    tab_lf, tab_rf = st.tabs(["Left Foot (5 Strikes)", "Right Foot (5 Strikes)"])
-
-    for foot_label, f_tab in [("Left Foot", tab_lf), ("Right Foot", tab_rf)]:
-      with f_tab:
-        cols_w = st.columns(5)
-        for strike_idx in range(5):
-          with cols_w[strike_idx]:
-            st.markdown(f"**Strike {strike_idx + 1}**")
-            w_start = st.number_input(
-                f"Contact (s):",
-                min_value=t_min,
-                max_value=t_max,
-                value=float(st.session_state["as4_strike_windows"][foot_label][strike_idx][0]),
-                step=0.01,
-                format="%.3f",
-                key=f"as4_ws_{foot_label}_{strike_idx}",
-            )
-            w_end = st.number_input(
-                f"Toe-Off (s):",
-                min_value=t_min,
-                max_value=t_max,
-                value=float(st.session_state["as4_strike_windows"][foot_label][strike_idx][1]),
-                step=0.01,
-                format="%.3f",
-                key=f"as4_we_{foot_label}_{strike_idx}",
-            )
-            st.session_state["as4_strike_windows"][foot_label][strike_idx] = [w_start, w_end]
+    cols_w = st.columns(5)
+    for strike_idx in range(5):
+      with cols_w[strike_idx]:
+        st.markdown(f"**Strike {strike_idx + 1}**")
+        w_start = st.number_input(
+            f"Contact (s):",
+            min_value=t_min,
+            max_value=t_max,
+            value=float(st.session_state["as4_strike_windows"][as4_active_foot][strike_idx][0]),
+            step=0.01,
+            format="%.3f",
+            key=f"as4_ws_{as4_active_foot}_{strike_idx}",
+        )
+        w_end = st.number_input(
+            f"Toe-Off (s):",
+            min_value=t_min,
+            max_value=t_max,
+            value=float(st.session_state["as4_strike_windows"][as4_active_foot][strike_idx][1]),
+            step=0.01,
+            format="%.3f",
+            key=f"as4_we_{as4_active_foot}_{strike_idx}",
+        )
+        st.session_state["as4_strike_windows"][as4_active_foot][strike_idx] = [w_start, w_end]
 
     st.markdown("---")
 
     # -------------------------------------------------------------------------
-    # PART 3: COP ALGORITHM & CALCULATION ENGINE
+    # PART 3: COP PARAMETERS (INHERITED DIRECTLY FROM PART 1)
     # -------------------------------------------------------------------------
     st.markdown("### Part 3: COP Calculation Parameters & Data Source")
     
-    cop_c1, cop_c2, cop_c3 = st.columns(3)
-    with cop_c1:
-      cop_plate_src = st.selectbox(
-          "Source Force Plate Signal:",
-          ["FP1 (Plate 1)", "FP2 (Plate 2)"],
-          index=None,
-          placeholder="Select a force plate...",
-          key="as4_cop_plate_src",
-      )
-    with cop_c2:
-      cop_filter_choice = st.selectbox(
-          "Signal Conditioning Applied:",
-          ["Raw Transducer Signals", "Low-Pass Filtered (20 Hz)", "Debiased + Filtered"],
-          index=None,
-          placeholder="Select signal conditioning...",
-          key="as4_cop_filt_choice",
-      )
-    with cop_c3:
-      fz_gate_threshold = st.number_input(
-          "Vertical Force Cutoff Gate |Fz| (N):",
-          value=0.0,
-          min_value=0.0,
-          max_value=200.0,
-          step=5.0,
-          key="as4_cop_fz_gate",
-          help="Samples where |Fz| is less than this value are masked with NaN to prevent division-by-zero explosions.",
-      )
+    # Automatically infer plate source from Part 1 channel selection or FP1 foot contact choice
+    if detection_channel and "Plate 2" in detection_channel or (detection_channel and "FP2" in detection_channel):
+      inferred_plate = "FP2"
+    elif fp1_foot_contact and as4_active_foot != fp1_foot_contact:
+      inferred_plate = "FP2"
+    else:
+      inferred_plate = "FP1"
 
-    if cop_plate_src is None:
-      st.info("Please select a Source Force Plate above to compute and render kinetics and COP.")
-      st.stop()
-
-    p_char = "1" if "FP1" in cop_plate_src else "2"
-    selected_fp = raw_fp1 if p_char == "1" else raw_fp2
-
-    fx_raw = selected_fp.data.get(f"F{p_char}X", np.zeros_like(selected_fp.time))
-    fy_raw = selected_fp.data.get(f"F{p_char}Y", np.zeros_like(selected_fp.time))
-    fz_raw = selected_fp.data.get(f"F{p_char}Z", np.zeros_like(selected_fp.time))
-    mx_raw = selected_fp.data.get(f"M{p_char}X", np.zeros_like(selected_fp.time))
-    my_raw = selected_fp.data.get(f"M{p_char}Y", np.zeros_like(selected_fp.time))
-    mz_raw = selected_fp.data.get(f"M{p_char}Z", np.zeros_like(selected_fp.time))
-
+    p_char = "2" if inferred_plate == "FP2" else "1"
+    selected_fp = raw_fp2 if p_char == "2" else raw_fp1
     fp_time = selected_fp.time
 
+    # Inherit threshold and filter settings from Part 1
+    fz_gate_threshold = float(thresh_val) if thresh_val > 0.0 else 25.0
+    active_filt_label = as4_filter_mode if detection_channel is not None else "None (Raw)"
+
+    st.info(
+        f"**Inherited Parameters from Part 1:** Force Plate: **{inferred_plate}** | "
+        f"Conditioning: **{active_filt_label}** | "
+        f"Vertical Gate Threshold: **|Fz| ≥ {fz_gate_threshold:.1f} N**"
+    )
+
+    # Condition 6 components using Part 1 filtering choices
+    def condition_channel(sig_arr):
+      out = np.copy(sig_arr)
+      try:
+        if active_filt_label == "Butterworth Low-pass" and as4_fc is not None:
+          wn = min(max(as4_fc / nyq_rate, 0.001), 0.999)
+          sos = signal.butter(4, wn, btype="low", output="sos")
+          out = signal.sosfiltfilt(sos, out)
+        elif active_filt_label == "Moving Average Smoothing" and as4_smooth_window is not None:
+          w_len = max(3, int(as4_smooth_window))
+          out = np.convolve(out, np.ones(w_len) / w_len, mode="same")
+      except Exception:
+        pass
+      return out
+
+    fx_raw = condition_channel(selected_fp.data.get(f"F{p_char}X", np.zeros_like(fp_time)))
+    fy_raw = condition_channel(selected_fp.data.get(f"F{p_char}Y", np.zeros_like(fp_time)))
+    fz_raw = condition_channel(selected_fp.data.get(f"F{p_char}Z", np.zeros_like(fp_time)))
+    mx_raw = condition_channel(selected_fp.data.get(f"M{p_char}X", np.zeros_like(fp_time)))
+    my_raw = condition_channel(selected_fp.data.get(f"M{p_char}Y", np.zeros_like(fp_time)))
+    mz_raw = condition_channel(selected_fp.data.get(f"M{p_char}Z", np.zeros_like(fp_time)))
+
+    st.markdown("---")
+
     # -------------------------------------------------------------------------
-    # PART 4: VISUALIZATION SELECTION & 6-COMPONENT INSPECTION
+    # PART 4: KINETIC & COP DELIVERABLES (SYNCHRONIZED WITH PART 2 FOOT)
     # -------------------------------------------------------------------------
     st.markdown("### Part 4: Kinetic & COP Deliverables")
 
-    v_col1, v_col2 = st.columns(2)
-    with v_col1:
-      inspect_foot = st.selectbox(
-          "Inspect Foot:",
-          ["Left Foot", "Right Foot"],
-          index=None,
-          placeholder="Select a foot...",
-          key="as4_inspect_foot",
-      )
-    with v_col2:
-      inspect_strike_choice = st.selectbox(
-          "Inspect Strike Number:",
-          options=list(range(1, 6)),
-          format_func=lambda x: f"Strike {x}",
-          index=None,
-          placeholder="Select a strike number...",
-          key="as4_inspect_strike_idx",
-      )
-
-    if inspect_foot is None or inspect_strike_choice is None:
-      st.info("Select both a Foot and a Strike Number above to view the 6-component plots and COP paths.")
-      st.stop()
+    inspect_strike_choice = st.selectbox(
+        f"Select Strike Number to Inspect ({as4_active_foot}):",
+        options=list(range(1, 6)),
+        format_func=lambda x: f"Strike {x}",
+        index=0,
+        key="as4_inspect_strike_idx",
+    )
 
     inspect_strike_idx = inspect_strike_choice - 1
-    cur_s, cur_e = st.session_state["as4_strike_windows"][inspect_foot][inspect_strike_idx]
+    cur_s, cur_e = st.session_state["as4_strike_windows"][as4_active_foot][inspect_strike_idx]
     
     st.info(
-        f"Displaying **{inspect_foot} — Strike {inspect_strike_idx + 1}** "
+        f"Displaying **{as4_active_foot} — Strike {inspect_strike_idx + 1}** "
         f"(Interval: **{cur_s:.3f}s** to **{cur_e:.3f}s** | Duration: **{max(0.0, cur_e - cur_s):.3f}s**)"
     )
 
     mask_cur = (fp_time >= cur_s) & (fp_time <= cur_e)
     if not np.any(mask_cur) or cur_e <= cur_s:
-      st.warning("Selected temporal window contains no active data samples. Please adjust Start/End times above.")
+      st.warning("Selected temporal window contains no active data samples. Please adjust Start/End times in Part 2.")
       st.stop()
 
     t_sub = fp_time[mask_cur]
@@ -2619,8 +2603,8 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     my_sub = my_raw[mask_cur]
     mz_sub = mz_raw[mask_cur]
 
-    # --- 6-Component Plot ---
-    st.markdown(f"#### 1. Six-Component Kinetics ({inspect_foot}: Strike {inspect_strike_idx + 1})")
+    # --- 6-Component Subplots ---
+    st.markdown(f"#### 1. Six-Component Kinetics ({as4_active_foot}: Strike {inspect_strike_idx + 1})")
     
     from plotly.subplots import make_subplots
     fig_6comp = make_subplots(
@@ -2664,14 +2648,13 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     )
     st.plotly_chart(fig_6comp, use_container_width=True)
 
-    # --- Compute COP for the active strike ---
+    # --- Compute COP ---
     EPSILON = 1e-6
     gate_mask = np.abs(fz_sub) >= fz_gate_threshold
 
     cop_x_sub = np.where(gate_mask, -my_sub / (fz_sub + EPSILON), np.nan)
     cop_y_sub = np.where(gate_mask, mx_sub / (fz_sub + EPSILON), np.nan)
 
-    # --- COP Plots ---
     st.markdown("#### 2. Centre of Pressure Trajectories")
     
     col_p1, col_p2 = st.columns(2)
@@ -2684,7 +2667,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           go.Scatter(x=t_sub, y=cop_y_sub, mode="lines", name="COPy (A-P)", line=dict(color="#f43f5e", width=2))
       )
       fig_cop_ts.update_layout(
-          title=f"COP Coordinates vs. Time ({inspect_foot}: Strike {inspect_strike_idx + 1})",
+          title=f"COP Coordinates vs. Time ({as4_active_foot}: Strike {inspect_strike_idx + 1})",
           xaxis_title="Time (s)",
           yaxis_title="Displacement (m)",
           template="plotly_dark",
@@ -2739,7 +2722,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         )
 
       fig_planar.update_layout(
-          title=f"Planar Path: COPx vs. COPy ({inspect_foot}: Strike {inspect_strike_idx + 1})",
+          title=f"Planar Path: COPx vs. COPy ({as4_active_foot}: Strike {inspect_strike_idx + 1})",
           xaxis_title="Medio-Lateral Position COPx (m)",
           yaxis_title="Antero-Posterior Position COPy (m)",
           template="plotly_dark",
@@ -2752,13 +2735,13 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     # -------------------------------------------------------------------------
     # PART 5: MULTI-STRIKE COMPARISON (OVERLAY ALL 5 STRIKES)
     # -------------------------------------------------------------------------
-    st.markdown(f"#### 3. Planar Comparison Across All 5 Strikes ({inspect_foot})")
+    st.markdown(f"#### 3. Planar Comparison Across All 5 Strikes ({as4_active_foot})")
     
     fig_multi = go.Figure()
     strike_colors = ["#38bdf8", "#818cf8", "#c084fc", "#f472b6", "#fb7185"]
 
     for s_i in range(5):
-      s_time_start, s_time_end = st.session_state["as4_strike_windows"][inspect_foot][s_i]
+      s_time_start, s_time_end = st.session_state["as4_strike_windows"][as4_active_foot][s_i]
       m_i = (fp_time >= s_time_start) & (fp_time <= s_time_end)
       if np.any(m_i) and s_time_end > s_time_start:
         fz_i = fz_raw[m_i]
@@ -2783,7 +2766,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           )
 
     fig_multi.update_layout(
-        title=f"Overlay of All 5 Planar COP Trajectories ({inspect_foot})",
+        title=f"Overlay of All 5 Planar COP Trajectories ({as4_active_foot})",
         xaxis_title="Medio-Lateral COPx (m)",
         yaxis_title="Antero-Posterior COPy (m)",
         template="plotly_dark",
@@ -2825,4 +2808,3 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           * Discuss a representative purpose for calculating COP (e.g., assessing postural stability, dynamic balance control, foot pronation/supination patterns, or diabetic plantar pressure distribution).
           """
       )
-          
