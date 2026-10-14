@@ -2577,22 +2577,26 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     st.markdown("---")
 
 # -------------------------------------------------------------------------
-    # PART 3: COP PARAMETERS (INHERITED DIRECTLY FROM PART 1)
+    # PART 3: COP CALCULATION PARAMETERS & DATA SOURCE (INHERITED DIRECTLY FROM PART 1)
     # -------------------------------------------------------------------------
     st.markdown("### Part 3: COP Calculation Parameters & Data Source")
     
-    # Automatically infer plate source from Part 1 channel selection or FP1 foot contact choice
-    if detection_channel and ("Plate 2" in detection_channel or "FP2" in detection_channel):
+    # 1. Direct Priority: If user selected an FP1 or FP2 channel in Part 1, lock to that plate
+    if detection_channel and any(x in detection_channel for x in ["Plate 2", "FP2", "F2", "M2"]):
       inferred_plate = "FP2"
-    elif fp1_foot_contact and as4_active_foot != fp1_foot_contact:
-      inferred_plate = "FP2"
+    elif detection_channel and any(x in detection_channel for x in ["Plate 1", "FP1", "F1", "M1"]):
+      inferred_plate = "FP1"
+    # 2. Secondary fallback only if kinematics/markers/angles were used for detection
+    elif fp1_foot_contact is not None:
+      inferred_plate = "FP1" if as4_active_foot == fp1_foot_contact else "FP2"
     else:
       inferred_plate = "FP1"
 
     p_char = "2" if inferred_plate == "FP2" else "1"
-    selected_fp = raw_fp2 if p_char == "2" else raw_fp1
+    selected_fp = raw_fp2 if p_char == "2" else raw_fp1[cite: 3]
     fp_time = selected_fp.time
 
+    # Inherit threshold and filter settings from Part 1
     fz_gate_threshold = float(thresh_val) if thresh_val > 0.0 else 25.0
     active_filt_label = as4_filter_mode if detection_channel is not None else "None (Raw)"
 
@@ -2621,6 +2625,10 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           out -= offset_val
 
       # 3. Filtering
+      dt_samp = float(np.mean(np.diff(fp_time))) if len(fp_time) > 1 else 0.001
+      fs_rate = 1.0 / dt_samp if dt_samp > 0 else 1000.0
+      nyq_rate = 0.5 * fs_rate
+
       try:
         if active_filt_label == "Butterworth Low-pass" and as4_fc is not None:
           wn = min(max(as4_fc / nyq_rate, 0.001), 0.999)
@@ -2647,7 +2655,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
     mz_raw = condition_channel(selected_fp.data.get(f"M{p_char}Z", np.zeros_like(fp_time)), is_moment=True)
 
     st.markdown("---")
-
+    
     # -------------------------------------------------------------------------
     # PART 4: KINETIC & COP DELIVERABLES (SYNCHRONIZED WITH PART 2 FOOT)
     # -------------------------------------------------------------------------
