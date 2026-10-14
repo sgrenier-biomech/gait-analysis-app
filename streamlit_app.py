@@ -500,19 +500,25 @@ def build_threejs_kinetic_viewer(
   grf_payload = None
   if grf_data is not None:
     grf_payload = {
-        "cop": [
-            # Lab [x, y, z] -> Three.js [x, z_up, -y]
-            [round(c[0], 4), round(c[2], 4), round(-c[1], 4)]
-            if c is not None and not np.isnan(c).any() else None
-            for c in grf_data["cop"][::step]
-        ],
-        "force": [
-            # GRF upward (+z) -> Three.js (+y), forward (+y) -> Three.js (-z)
-            [round(f[0], 2), round(f[2], 2), round(-f[1], 2)]
-            if f is not None and not np.isnan(f).any() else None
-            for f in grf_data["force"][::step]
-        ],
-    }    
+      "cop": [
+          # COP Position: Lab [x, y, z] -> Three.js [x, z_up, -y]
+          [round(c[0], 4), round(c[2], 4), round(-c[1], 4)]
+          if c is not None and not np.isnan(c).any()
+          else None
+          for c in grf_data["cop"][::step]
+      ],
+      "force": [
+          # Vector Direction:
+          # Lab Fx -> Three.js X
+          # Lab Fz -> Three.js Y (upward)
+          # Lab Fy -> Three.js -Z (forward is -Z, backward braking is +Z)
+          [round(f[0], 2), round(f[2], 2), round(-f[1], 2)]
+          if f is not None and not np.isnan(f).any()
+          else None
+          for f in grf_data["force"][::step]
+      ],
+  }
+      
   data_payload = json.dumps({
       "times": times,
       "n_frames": n_frames,
@@ -3526,7 +3532,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       cop_local_x = -my / (fz + EPSILON)
       cop_local_y = mx / (fz + EPSILON)
 
-      # 6. Build Foot-Anchored COP Trajectory for Each Strike
+    # 6. Build Foot-Anchored COP Trajectory for Each Strike
       cop_aligned = [None] * n_marker_frames
       force_aligned = [None] * n_marker_frames
 
@@ -3534,14 +3540,14 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         if w_end <= w_start:
           continue
 
-        # Slices in analog and marker domains
+        # 1. Slice analog and marker domains for this strike window
         fp_mask = (fp_time >= w_start) & (fp_time <= w_end)
         m_mask = np.where((m_time >= w_start) & (m_time <= w_end))[0]
 
         if not np.any(fp_mask) or len(m_mask) == 0:
           continue
 
-        # Extract local COP range for normalization (0.0 = heel contact, 1.0 = forefoot push-off)
+        # 2. Extract local COP range for progression normalization
         cop_y_stance = cop_local_y[fp_mask]
         cop_x_stance = cop_local_x[fp_mask]
         t_fp_stance = fp_time[fp_mask]
@@ -3550,31 +3556,41 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
         y_max = np.nanmax(cop_y_stance)
         y_span = max(0.01, y_max - y_min)
 
+        # 3. Interpolate foot placement and assign instantaneous GRF
         for m_idx in m_mask:
           t_cur = m_time[m_idx]
           fp_idx_near = np.argmin(np.abs(t_fp_stance - t_cur))
 
-          # Progress factor: 0 at heel strike, advances toward 1 at toe-off
+          # Progression: 0 at heel strike -> 1 toward toe-off
           raw_py = cop_y_stance[fp_idx_near]
-          progress_ap = np.clip((raw_py - y_min) / y_span, 0.0, 1.0) if not np.isnan(raw_py) else 0.5
+          progress_ap = (
+              np.clip((raw_py - y_min) / y_span, 0.0, 1.0)
+              if not np.isnan(raw_py)
+              else 0.5
+          )
 
-          # Anatomical interpolation: from CAL to 5TH/TOE
+          # Anatomical interpolation from CAL to 5TH/TOE
           heel_pos = cal_pts[m_idx]
           fore_pos = toe_pts[m_idx]
 
-          # Mediolateral shift (plantar width variation)
           cop_pt = heel_pos + progress_ap * (fore_pos - heel_pos)
-          cop_pt[2] = 0.0  # Anchor firmly to the ground plane
+          cop_pt[2] = 0.0  # Anchor to ground plane
 
-          # Kinetics at this instant
+          # Extract instantaneous kinetic components
           closest_analog_idx = np.argmin(np.abs(fp_time - t_cur))
           f_vec = [
               float(fx[closest_analog_idx]),
-              float(fy[closest_analog_idx]),
-              float(np.abs(fz[closest_analog_idx])),  # Force ON subject is strictly upward (+Z)
+              float(fy[closest_analog_idx]),  # Lab A-P force (+ forward)
+              float(
+                  np.abs(fz[closest_analog_idx])
+              ),  # Force on subject is upward (+Z)
           ]
 
-          cop_aligned[m_idx] = [float(cop_pt[0]), float(cop_pt[1]), float(cop_pt[2])]
+          cop_aligned[m_idx] = [
+              float(cop_pt[0]),
+              float(cop_pt[1]),
+              float(cop_pt[2]),
+          ]
           force_aligned[m_idx] = f_vec
 
       grf_data_payload = {
