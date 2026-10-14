@@ -442,6 +442,447 @@ def build_threejs_standalone_viewer(markers, interconnections, step=2):
 </html>"""
   return html_code
 
+def build_threejs_kinetic_viewer(
+    markers,
+    interconnections,
+    step=1,
+    frames_ts=None,
+    grf_data=None,
+):
+  """Dedicated Assignment 5 WebGL viewer featuring joint LCS frames and COP GRF vectors."""
+  times = markers.time[::step].tolist()
+  n_frames = len(times)
+
+  all_pts = []
+  for m in markers.data.values():
+    all_pts.append(m[::step, :3])
+  stacked = np.concatenate(all_pts, axis=0)
+  scale = 0.001 if float(np.nanmax(np.abs(stacked))) > 50.0 else 1.0
+
+  center_x = float(np.nanmean(stacked[:, 0]) * scale)
+  center_y = float(np.nanmean(stacked[:, 1]) * scale)
+  center_z = float(np.nanmean(stacked[:, 2]) * scale)
+
+  segments = []
+  for group_name, info in interconnections.items():
+    raw_color = info.get("Color", (0.0, 1.0, 1.0))
+    if isinstance(raw_color, (tuple, list)):
+      r = int(round(max(0.0, min(1.0, raw_color[0])) * 255))
+      g = int(round(max(0.0, min(1.0, raw_color[1])) * 255))
+      b = int(round(max(0.0, min(1.0, raw_color[2])) * 255))
+      color_str = f"#{r:02x}{g:02x}{b:02x}"
+    else:
+      color_str = str(raw_color)
+
+    for link in info["Links"]:
+      segments.append({"color": color_str, "markers": link})
+
+  marker_dict = {}
+  for m_name, m_data in markers.data.items():
+    downsampled = m_data[::step, :3] * scale
+    cleaned = np.where(np.isnan(downsampled), None, np.round(downsampled, 4))
+    marker_dict[m_name] = cleaned.tolist()
+
+  lcs_payload = {}
+  if frames_ts is not None and hasattr(frames_ts, "data"):
+    for frame_name, transform_arr in frames_ts.data.items():
+      t_down = transform_arr[::step]
+      frame_matrices = []
+      for mat in t_down:
+        if np.isnan(mat).any():
+          frame_matrices.append(None)
+        else:
+          m_scaled = np.copy(mat)
+          m_scaled[:3, 3] = m_scaled[:3, 3] * scale
+          frame_matrices.append(np.round(m_scaled, 4).tolist())
+      lcs_payload[frame_name] = frame_matrices
+
+  grf_payload = None
+  if grf_data is not None:
+    grf_payload = {
+        "cop": [
+            [round(c[0] * scale, 4), round(c[2] * scale, 4), round(-c[1] * scale, 4)]
+            if c is not None and not np.isnan(c).any() else None
+            for c in grf_data["cop"][::step]
+        ],
+        "force": [
+            [round(f[0], 2), round(f[2], 2), round(-f[1], 2)]
+            if f is not None and not np.isnan(f).any() else None
+            for f in grf_data["force"][::step]
+        ],
+    }
+
+  data_payload = json.dumps({
+      "times": times,
+      "n_frames": n_frames,
+      "segments": segments,
+      "markers": marker_dict,
+      "center": [center_x, center_z, -center_y],
+      "lcs": lcs_payload,
+      "grf": grf_payload,
+  })
+
+  html_code = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; user-select: none; }}
+    body {{ background: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; width: 100vw; height: 100vh; }}
+    #viewport {{ width: 100%; height: 100%; position: absolute; top: 0; left: 0; }}
+    #marker-tooltip {{
+      position: absolute; display: none; pointer-events: none;
+      background: rgba(15, 23, 42, 0.92); color: #38bdf8; font-family: monospace;
+      font-weight: 700; font-size: 12px; padding: 4px 8px; border-radius: 4px;
+      border: 1px solid rgba(56, 189, 248, 0.4); box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      transform: translate(-50%, -130%); z-index: 20; white-space: nowrap;
+    }}
+    #controls-card {{
+      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+      width: calc(100% - 32px); max-width: 960px;
+      background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px; padding: 12px 20px;
+      display: flex; align-items: center; gap: 16px; color: #f8fafc; z-index: 10;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    }}
+    .btn {{
+      background: #3b82f6; color: white; border: none; padding: 8px 18px;
+      border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px;
+    }}
+    .btn:hover {{ background: #2563eb; }}
+    .btn-preset {{
+      background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #cbd5e1; padding: 6px 12px; font-size: 12px; border-radius: 4px; cursor: pointer;
+    }}
+    .btn-preset:hover {{ background: rgba(255, 255, 255, 0.2); color: white; }}
+    .btn-preset.active {{ background: #3b82f6; color: white; border-color: #3b82f6; }}
+    input[type=range] {{ flex-grow: 1; accent-color: #3b82f6; cursor: pointer; height: 6px; }}
+    .readout {{ font-size: 13px; font-variant-numeric: tabular-nums; min-width: 100px; color: #94a3b8; text-align: right; }}
+    .top-left-controls {{ position: absolute; top: 16px; left: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 10; }}
+    .preset-group {{ display: flex; gap: 8px; }}
+    .toggle-group {{ display: flex; gap: 8px; }}
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+  <div id="marker-tooltip"></div>
+
+  <div class="top-left-controls">
+    <div class="preset-group">
+      <button class="btn-preset" onclick="setPreset('side')">Sagittal</button>
+      <button class="btn-preset" onclick="setPreset('front')">Frontal</button>
+      <button class="btn-preset" onclick="setPreset('top')">Transverse</button>
+      <button class="btn-preset" onclick="setPreset('iso')">Isometric</button>
+    </div>
+    <div class="toggle-group">
+      <button id="toggleLCS" class="btn-preset active" onclick="toggleLCS()">LCS Axes (RGB)</button>
+      <button id="toggleGRF" class="btn-preset active" onclick="toggleGRF()">GRF Vector (COP)</button>
+    </div>
+  </div>
+
+  <div id="viewport"></div>
+
+  <div id="controls-card">
+    <button id="playBtn" class="btn">Play</button>
+    <input type="range" id="scrubber" min="0" max="{n_frames - 1}" value="0" step="1">
+    <span id="readout" class="readout">0.00s | 0</span>
+    <select id="speed" style="background:#1e293b; color:white; border:1px solid #475569; padding:5px 8px; border-radius:6px; font-size:12px;">
+      <option value="0.25">0.25x</option>
+      <option value="0.5">0.5x</option>
+      <option value="1" selected>1.0x</option>
+      <option value="1.5">1.5x</option>
+      <option value="2">2.0x</option>
+    </select>
+  </div>
+
+  <script id="motionData" type="application/json">
+    {data_payload}
+  </script>
+
+  <script>
+    const data = JSON.parse(document.getElementById('motionData').textContent);
+    const nFrames = data.n_frames;
+
+    const cx = data.center[0] || 0;
+    const cy = data.center[1] || 1;
+    const cz = data.center[2] || 0;
+
+    const container = document.getElementById('viewport');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0f19);
+
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.05, 500);
+    camera.position.set(cx + 1.8, cy + 0.6, cz + 2.0);
+
+    const renderer = new THREE.WebGLRenderer({{ antialias: true }});
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    container.appendChild(renderer.domElement);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.target.set(cx, cy, cz);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+
+    const grid = new THREE.GridHelper(4.0, 20, 0x334155, 0x1e293b);
+    grid.position.set(cx, 0, cz);
+    scene.add(grid);
+    scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+
+    const lineObjects = [];
+    data.segments.forEach(seg => {{
+      const geom = new THREE.BufferGeometry();
+      const posArr = new Float32Array(seg.markers.length * 3);
+      geom.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+      const mat = new THREE.LineBasicMaterial({{ color: seg.color, linewidth: 3 }});
+      const line = new THREE.Line(geom, mat);
+      scene.add(line);
+      lineObjects.push({{ line, markers: seg.markers }});
+    }});
+
+    const jointSpheres = [];
+    const interactiveSpheres = [];
+    const sphereGeom = new THREE.SphereGeometry(0.015, 12, 12);
+    const sphereMat = new THREE.MeshBasicMaterial({{ color: 0xffffff }});
+    Object.keys(data.markers).forEach(m => {{
+      const mesh = new THREE.Mesh(sphereGeom, sphereMat.clone());
+      mesh.userData = {{ markerName: m }};
+      scene.add(mesh);
+      jointSpheres.push({{ mesh, marker: m }});
+      interactiveSpheres.push(mesh);
+    }});
+
+    const lcsObjects = {{}};
+    let showLCS = true;
+    if (data.lcs) {{
+      Object.keys(data.lcs).forEach(segName => {{
+        const axes = new THREE.AxesHelper(0.12);
+        axes.renderOrder = 5;
+        axes.material.depthTest = false;
+        scene.add(axes);
+        lcsObjects[segName] = axes;
+      }});
+    }}
+
+    let showGRF = true;
+    const grfGroup = new THREE.Group();
+    const grfArrow = new THREE.ArrowHelper(
+      new THREE.Vector3(0, 1, 0),
+      new THREE.Vector3(0, 0, 0),
+      0.5,
+      0xfacc15,
+      0.08,
+      0.04
+    );
+    grfArrow.line.material.linewidth = 3;
+    const copSphere = new THREE.Mesh(
+      new THREE.SphereGeometry(0.02, 12, 12),
+      new THREE.MeshBasicMaterial({{ color: 0xef4444 }})
+    );
+    grfGroup.add(grfArrow);
+    grfGroup.add(copSphere);
+    scene.add(grfGroup);
+    grfGroup.visible = false;
+
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2(-999, -999);
+    const tooltip = document.getElementById('marker-tooltip');
+    let hoveredMesh = null;
+
+    container.addEventListener('mousemove', (e) => {{
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      tooltip.style.left = `${{e.clientX}}px`;
+      tooltip.style.top = `${{e.clientY}}px`;
+    }});
+
+    container.addEventListener('mouseleave', () => {{
+      mouse.x = -999;
+      mouse.y = -999;
+      tooltip.style.display = 'none';
+      if (hoveredMesh) {{
+        hoveredMesh.scale.set(1, 1, 1);
+        hoveredMesh.material.color.setHex(0xffffff);
+        hoveredMesh = null;
+      }}
+    }});
+
+    function updatePose(fIdx) {{
+      lineObjects.forEach(obj => {{
+        const posAttr = obj.line.geometry.attributes.position;
+        const arr = posAttr.array;
+        let ptr = 0;
+        obj.markers.forEach(m => {{
+          const pt = data.markers[m] ? data.markers[m][fIdx] : null;
+          if (pt && pt[0] !== null) {{
+            arr[ptr++] = pt[0];
+            arr[ptr++] = pt[2];
+            arr[ptr++] = -pt[1];
+          }} else {{
+            arr[ptr++] = cx; arr[ptr++] = cy; arr[ptr++] = cz;
+          }}
+        }});
+        posAttr.needsUpdate = true;
+      }});
+
+      jointSpheres.forEach(obj => {{
+        const pt = data.markers[obj.marker] ? data.markers[obj.marker][fIdx] : null;
+        if (pt && pt[0] !== null) {{
+          obj.mesh.position.set(pt[0], pt[2], -pt[1]);
+          obj.mesh.visible = true;
+        }} else {{
+          obj.mesh.visible = false;
+        }}
+      }});
+
+      if (data.lcs) {{
+        Object.keys(lcsObjects).forEach(segName => {{
+          const axes = lcsObjects[segName];
+          const matArr = data.lcs[segName] ? data.lcs[segName][fIdx] : null;
+          if (showLCS && matArr) {{
+            axes.visible = true;
+            const m = new THREE.Matrix4();
+            m.set(
+               matArr[0][0],  matArr[0][2], -matArr[0][1],  matArr[0][3],
+               matArr[2][0],  matArr[2][2], -matArr[2][1],  matArr[2][3],
+              -matArr[1][0], -matArr[1][2],  matArr[1][1], -matArr[1][3],
+               0,             0,             0,             1
+            );
+            axes.position.setFromMatrixPosition(m);
+            axes.quaternion.setFromRotationMatrix(m);
+          }} else {{
+            axes.visible = false;
+          }}
+        }});
+      }}
+
+      if (showGRF && data.grf && data.grf.cop && data.grf.cop[fIdx] && data.grf.force && data.grf.force[fIdx]) {{
+        const cop = data.grf.cop[fIdx];
+        const f = data.grf.force[fIdx];
+        const fMag = Math.sqrt(f[0]*f[0] + f[1]*f[1] + f[2]*f[2]);
+
+        if (fMag > 30.0) {{
+          grfGroup.visible = true;
+          copSphere.position.set(cop[0], cop[1], cop[2]);
+          const dir = new THREE.Vector3(f[0], f[1], f[2]).normalize();
+          grfArrow.position.set(cop[0], cop[1], cop[2]);
+          grfArrow.setDirection(dir);
+          const arrowLen = Math.min(1.2, Math.max(0.08, fMag * 0.0008));
+          grfArrow.setLength(arrowLen, arrowLen * 0.25, arrowLen * 0.12);
+        }} else {{
+          grfGroup.visible = false;
+        }}
+      }} else {{
+        grfGroup.visible = false;
+      }}
+
+      document.getElementById('scrubber').value = fIdx;
+      const t = data.times[fIdx] !== undefined ? data.times[fIdx].toFixed(2) : "0.00";
+      document.getElementById('readout').textContent = `${{t}}s | ${{fIdx}}`;
+    }}
+
+    window.toggleLCS = function() {{
+      showLCS = !showLCS;
+      document.getElementById('toggleLCS').classList.toggle('active', showLCS);
+      updatePose(Math.floor(currentFrameFloat));
+    }};
+
+    window.toggleGRF = function() {{
+      showGRF = !showGRF;
+      document.getElementById('toggleGRF').classList.toggle('active', showGRF);
+      updatePose(Math.floor(currentFrameFloat));
+    }};
+
+    window.setPreset = function(type) {{
+      const dist = 2.4;
+      if (type === 'side') camera.position.set(cx + dist, cy, cz);
+      else if (type === 'front') camera.position.set(cx, cy, cz + dist);
+      else if (type === 'top') camera.position.set(cx + 0.001, cy + dist, cz);
+      else if (type === 'iso') camera.position.set(cx + 1.6, cy + 1.0, cz + 1.6);
+      controls.target.set(cx, cy, cz);
+    }};
+
+    let isPlaying = false;
+    let currentFrameFloat = 0;
+    let lastTime = performance.now();
+
+    const playBtn = document.getElementById('playBtn');
+    const scrubber = document.getElementById('scrubber');
+    const speedSelect = document.getElementById('speed');
+
+    playBtn.addEventListener('click', () => {{
+      isPlaying = !isPlaying;
+      playBtn.textContent = isPlaying ? 'Pause' : 'Play';
+      lastTime = performance.now();
+    }});
+
+    scrubber.addEventListener('input', (e) => {{
+      isPlaying = false;
+      playBtn.textContent = 'Play';
+      currentFrameFloat = parseInt(e.target.value);
+      updatePose(currentFrameFloat);
+    }});
+
+    function loop(now) {{
+      requestAnimationFrame(loop);
+      controls.update();
+
+      if (mouse.x > -900) {{
+        raycaster.setFromCamera(mouse, camera);
+        const visibleSpheres = interactiveSpheres.filter(s => s.visible);
+        const intersects = raycaster.intersectObjects(visibleSpheres);
+
+        if (intersects.length > 0) {{
+          const hit = intersects[0].object;
+          if (hoveredMesh !== hit) {{
+            if (hoveredMesh) {{
+              hoveredMesh.scale.set(1, 1, 1);
+              hoveredMesh.material.color.setHex(0xffffff);
+            }}
+            hoveredMesh = hit;
+            hoveredMesh.scale.set(1.8, 1.8, 1.8);
+            hoveredMesh.material.color.setHex(0x38bdf8);
+          }}
+          tooltip.textContent = hit.userData.markerName;
+          tooltip.style.display = 'block';
+        }} else {{
+          if (hoveredMesh) {{
+            hoveredMesh.scale.set(1, 1, 1);
+            hoveredMesh.material.color.setHex(0xffffff);
+            hoveredMesh = null;
+          }}
+          tooltip.style.display = 'none';
+        }}
+      }}
+
+      if (isPlaying && nFrames > 0) {{
+        const dt = (now - lastTime) / 1000;
+        lastTime = now;
+        const spd = parseFloat(speedSelect.value);
+        currentFrameFloat = (currentFrameFloat + (dt * 60 * spd)) % nFrames;
+        updatePose(Math.floor(currentFrameFloat));
+      }} else {{
+        lastTime = now;
+      }}
+
+      renderer.render(scene, camera);
+    }}
+
+    updatePose(0);
+    requestAnimationFrame(loop);
+
+    window.addEventListener('resize', () => {{
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    }});
+  </script>
+</body>
+</html>"""
+  return html_code
 
 def run_segment_kinematics(
     c3d_file_path: str, mass_total: float, height_total: float
@@ -626,7 +1067,7 @@ def run_segment_kinematics(
       if abs(shift) > 1e-4:
         ts_obj.time = ts_obj.time + shift
 
-  return markers, angles, results, FP1, fp1, FP2, fp2, raw_analogs
+  return markers, angles, results, FP1, fp1, FP2, fp2, raw_analogs, frames
 
 
 # =======================================================
@@ -665,11 +1106,13 @@ if st.button("Process Data", type="primary"):
             FP2_raw,
             fp2_filt,
             raw_analogs,
+            frames,
         ) = run_segment_kinematics(selected_file_path, mass, height)
 
         st.session_state["markers"] = markers
         st.session_state["angles"] = angles
         st.session_state["results"] = results
+        st.session_state["frames"] = frames
 
         # Store both raw and default-filtered versions
         st.session_state["FP1_raw"] = FP1_raw
@@ -720,7 +1163,7 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
       "Assignment 2: CoM & GRF",
       "Assignment 3: 6-DOF GRF Analysis",
       "Assignment 4: COP",
-      "placeholder1",
+      "Assignment 5: 3D Kinetics & Kinematics",
       "placeholder2"
   ]
   
@@ -2888,3 +3331,116 @@ if "angles" in st.session_state and "FP1_raw" in st.session_state:
           * Discuss a representative purpose for calculating COP (e.g., assessing postural stability, dynamic balance control, foot pronation/supination patterns, or diabetic plantar pressure distribution).
           """
       )
+          
+  # =========================================================================
+  # ASSIGNMENT 5: DYNAMIC 3D KINETICS, LCS & GRF ANIMATION
+  # =========================================================================
+  with active_tabs[5]:
+    st.subheader("Assignment 5: 3D Gait Animation with Joint LCS & Ground Reaction Force Vectors")
+
+    # Display assigned C3D filename
+    assigned_file_name = "None (No file uploaded)"
+    if "c3d_file_path" in st.session_state and st.session_state["c3d_file_path"]:
+      assigned_file_name = Path(st.session_state["c3d_file_path"]).name
+    elif uploaded_file is not None:
+      assigned_file_name = uploaded_file.name
+
+    col_sub_info1, col_sub_info2 = st.columns([2, 1])
+    with col_sub_info1:
+      st.markdown(f"**Assigned C3D Trial File:** `{assigned_file_name}`")
+    with col_sub_info2:
+      st.caption("Submit this exact filename with your laboratory report.")
+
+    st.markdown(
+        """
+        ### Submission Deliverables:
+        1. **Screen Grab Video:** Record a video of your C3D trial playing in the 3D player below with:
+           * **Local Coordinate Systems (LCS)** displayed at the Pelvis, Left/Right Hips, Knees, and Ankles (Red = X, Green = Y, Blue = Z).
+           * **Ground Reaction Force (GRF) Vector** (yellow arrow) originating at the Center of Pressure (red sphere) during foot contact.
+        2. **Assigned Filename:** Submit the name of the C3D file assigned to you.
+        """
+    )
+
+    markers = st.session_state.get("markers")
+    frames_ts = st.session_state.get("frames")
+    raw_fp1 = st.session_state.get("FP1_raw")
+    raw_fp2 = st.session_state.get("FP2_raw")
+
+    if markers is not None and hasattr(markers, "data") and frames_ts is not None:
+      n_marker_frames = len(markers.time)
+      m_time = markers.time
+
+      cop_aligned = np.full((n_marker_frames, 3), np.nan)
+      force_aligned = np.full((n_marker_frames, 3), np.nan)
+
+      # Determine which platform to read from based on Assignment 4 selections
+      p_char = "1"
+      if "as4_det_chan" in st.session_state and st.session_state["as4_det_chan"]:
+        p_char = "2" if any(x in st.session_state["as4_det_chan"] for x in ["2", "FP2"]) else "1"
+
+      active_fp = raw_fp1 if p_char == "1" else raw_fp2
+      fp_time = active_fp.time
+
+      fx = active_fp.data.get(f"F{p_char}X", np.zeros_like(fp_time))
+      fy = active_fp.data.get(f"F{p_char}Y", np.zeros_like(fp_time))
+      fz = active_fp.data.get(f"F{p_char}Z", np.zeros_like(fp_time))
+      mx = active_fp.data.get(f"M{p_char}X", np.zeros_like(fp_time))
+      my = active_fp.data.get(f"M{p_char}Y", np.zeros_like(fp_time))
+
+      gate_thresh = float(st.session_state.get("as4_thresh_val", 30.0))
+      if gate_thresh <= 0.0:
+        gate_thresh = 30.0
+
+      EPSILON = 1e-6
+      active_mask = np.abs(fz) >= gate_thresh
+      cop_x = np.where(active_mask, -my / (fz + EPSILON), np.nan)
+      cop_y = np.where(active_mask, mx / (fz + EPSILON), np.nan)
+      cop_z = np.zeros_like(cop_x)
+
+      # Resample 1200 Hz analog kinetics onto the 120 Hz marker timeline
+      for dim, arr in enumerate([cop_x, cop_y, cop_z]):
+        valid = ~np.isnan(arr)
+        if np.any(valid):
+          cop_aligned[:, dim] = np.interp(m_time, fp_time[valid], arr[valid], left=np.nan, right=np.nan)
+
+      for dim, arr in enumerate([fx, fy, fz]):
+        force_aligned[:, dim] = np.interp(m_time, fp_time, arr)
+
+      grf_data_payload = {
+          "cop": cop_aligned.tolist(),
+          "force": force_aligned.tolist(),
+      }
+
+      req_joints = ["Pelvis", "ThighL", "ThighR", "ShankL", "ShankR", "FootL", "FootR"]
+      filtered_frames = ktk.TimeSeries(time=frames_ts.time)
+      for j in req_joints:
+        if j in frames_ts.data:
+          filtered_frames.data[j] = frames_ts.data[j]
+
+      html_kinetic_viewer = build_threejs_kinetic_viewer(
+          markers=markers,
+          interconnections=INTERCONNECTIONS,
+          step=1,
+          frames_ts=filtered_frames,
+          grf_data=grf_data_payload,
+      )
+
+      components.html(html_kinetic_viewer, height=680, scrolling=False)
+
+      with st.expander("💡 Lab Guidance: Joint Axes & GRF Vector Interpretation"):
+        st.markdown(
+            """
+            * **Local Coordinate System (LCS) Axes Convention:**
+              * **Red Axis (+X):** Transverse / Mediolateral axis.
+              * **Green Axis (+Y):** Longitudinal / Anteroposterior axis.
+              * **Blue Axis (+Z):** Segment long axis / Vertical axis.
+            * **Ground Reaction Force (GRF) Vector:**
+              * Originates from the **Center of Pressure (COP)** on the ground plane (marked by the red sphere).
+              * The yellow vector points upward and backward during heel contact (braking), and upward and forward during late stance (propulsion).
+            * **Recording Instructions:**
+              * Use **Sagittal (Side)** or **Isometric** views to capture both joint rotation and ground vector orientation.
+              * Use your operating system's screen recording shortcut (`Win + Alt + R` on Windows, `Cmd + Shift + 5` on macOS) to record 1 to 2 gait cycles.
+            """
+        )
+    else:
+      st.info("Please upload and process a .c3d file to generate the 3D animated kinematics and kinetics.")
